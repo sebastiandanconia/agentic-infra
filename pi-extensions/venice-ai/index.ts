@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -33,7 +33,6 @@ interface CachedModels {
   timestamp: number;
 }
 
-// No filtering — register *all* models from Venice.ai (~69 currently).
 // Models that report supportsFunctionCalling: false will use pi's simulated
 // prompt-based tool calling.
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -49,14 +48,11 @@ function loadCachedModels(): VeniceModel[] | null {
     const age = Date.now() - cached.timestamp;
 
     if (age < CACHE_TTL_MS) {
-      console.log(`Venice.ai: Using cached models (age: ${Math.floor(age / 1000 / 60)}m)`);
       return cached.models;
     }
 
-    console.log(`Venice.ai: Cache expired (age: ${Math.floor(age / 1000 / 60)}m)`);
     return null;
   } catch (error) {
-    console.error("Venice.ai: Failed to load cache:", error);
     return null;
   }
 }
@@ -68,9 +64,8 @@ function saveCachedModels(models: VeniceModel[]): void {
       timestamp: Date.now(),
     };
     fs.writeFileSync(CACHE_FILE, JSON.stringify(cached, null, 2));
-    console.log(`Venice.ai: Cached ${models.length} models`);
   } catch (error) {
-    console.error("Venice.ai: Failed to save cache:", error);
+    // Silent failure
   }
 }
 
@@ -99,25 +94,18 @@ async function fetchVeniceModels(apiKey: string, useCache: boolean = true): Prom
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.error(`Venice.ai models fetch failed: ${response.status} ${response.statusText}`);
       return [];
     }
 
     const data: VeniceModelsResponse = await response.json();
 
-    // No filtering — use all models
-    const allModels = data.data;
+    const models = data.data;
 
     // Save to cache
-    saveCachedModels(allModels);
+    saveCachedModels(models);
 
-    return allModels;
+    return models;
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      console.error("Venice.ai: API request timed out after 10s");
-    } else {
-      console.error("Venice.ai: Failed to fetch models:", error);
-    }
     return [];
   }
 }
@@ -141,6 +129,7 @@ function mapVeniceModel(model: VeniceModel) {
     compat: {
       supportsDeveloperRole: true,
       supportsReasoningEffort: spec.capabilities.supportsReasoningEffort,
+      supportsLongCacheRetention: false, // Venice rejects prompt_cache_retention: "24h"
     }
   };
 }
@@ -148,31 +137,32 @@ function mapVeniceModel(model: VeniceModel) {
 export default async function (pi: ExtensionAPI) {
   // Get API key from environment
   const apiKey = process.env.VENICE_API_KEY;
+  let piModels: any[] = [];
 
-  if (!apiKey) {
-    console.warn("Venice.ai extension: VENICE_API_KEY not set. Skipping model registration.");
-    console.warn("Set your API key: export VENICE_API_KEY='your-key-here'");
-    return;
+  if (apiKey) {
+    // Fetch models from Venice.ai (will use cache if available)
+    const veniceModels = await fetchVeniceModels(apiKey);
+
+    if (veniceModels.length > 0) {
+      // Map to pi model format
+      piModels = veniceModels.map(mapVeniceModel);
+    }
   }
-
-  // Fetch models from Venice.ai (will use cache if available)
-  const veniceModels = await fetchVeniceModels(apiKey);
-
-  if (veniceModels.length === 0) {
-    console.warn("Venice.ai extension: No models available. Check your API key or internet connection.");
-    return;
-  }
-
-  // Map to pi model format
-  const piModels = veniceModels.map(mapVeniceModel);
 
   // Register provider with models
   pi.registerProvider("venice", {
     baseUrl: "https://api.venice.ai/api/v1",
-    apiKey: "VENICE_API_KEY",
+    apiKey: apiKey || "VENICE_API_KEY",
     api: "openai-completions",
     models: piModels,
   });
 
-  console.log(`Venice.ai: Registered all ${piModels.length} available models (no family filtering)`);
+  // Notify the user of configuration issues on session start
+  pi.on("session_start", async (_event, ctx) => {
+    if (!apiKey) {
+      ctx.ui.notify("Venice.ai extension: VENICE_API_KEY not set. Models will not be available.", "warning");
+    } else if (piModels.length === 0) {
+      ctx.ui.notify("Venice.ai extension: No models available. Check your API key or connection.", "warning");
+    }
+  });
 }

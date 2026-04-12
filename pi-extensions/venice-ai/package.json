@@ -1,6 +1,36 @@
 {
   "name": "venice-ai-extension",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
   "version": "1.0.0",
+  "description": "Venice AI provider extension for pi coding agent",
   "type": "module",
-  "main": "index.ts"
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build && npm test"
+  },
+  "keywords": [
+    "pi",
+    "pi.dev",
+    "extension",
+    "venice",
+    "ai",
+    "provider"
+  ],
+  "author": "",
+  "license": "MIT",
+
+  "files": [
+    "dist"
+  ]
 }
