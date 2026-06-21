@@ -1,18 +1,27 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { fetchVeniceModels, mapVeniceModel, DEFAULT_CACHE_FILE } from "./lib";
+import {
+  fetchVeniceModels,
+  mapVeniceModel,
+  supportsFunctionCalling,
+  DEFAULT_CACHE_FILE,
+} from "./lib";
+import type { VeniceModel } from "./lib";
 
 export default async function (pi: ExtensionAPI) {
   // Get API key from environment.
   const apiKey = process.env.VENICE_API_KEY;
   let piModels: any[] = [];
+  let veniceModels: VeniceModel[] = [];
 
   if (apiKey) {
     // Fetch models from Venice.ai (will use cache if available).
-    const veniceModels = await fetchVeniceModels(apiKey, true, DEFAULT_CACHE_FILE);
+    veniceModels = await fetchVeniceModels(apiKey, true, DEFAULT_CACHE_FILE);
 
     if (veniceModels.length > 0) {
       // Map to pi model format.
-      piModels = veniceModels.map(mapVeniceModel);
+      piModels = veniceModels
+        .filter(supportsFunctionCalling)
+        .map(mapVeniceModel);
     }
   }
 

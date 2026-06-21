@@ -153,6 +153,20 @@ export async function fetchVeniceModels(
 }
 
 /**
+ * Whether a Venice model advertises function/tool calling.
+ *
+ * pi is a coding agent and always attaches its built-in tools to requests.
+ * Venice rejects `tools` with HTTP 400 ("tools is not supported by this
+ * model") for models whose spec reports `supportsFunctionCalling: false`
+ * (e.g. the e2ee-* TEE models). pi exposes no per-model way to suppress
+ * tool sending, so the extension currently HIDES such models (filters them
+ * out before registration). See index.ts.
+ */
+export function supportsFunctionCalling(model: VeniceModel): boolean {
+  return model.model_spec.capabilities.supportsFunctionCalling === true;
+}
+
+/**
  * Map a Venice model descriptor into pi's ProviderModelConfig shape.
  */
 export function mapVeniceModel(model: VeniceModel) {

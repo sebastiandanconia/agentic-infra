@@ -129,6 +129,47 @@ describe("extension factory", () => {
     expect(ctx.ui.notify).not.toHaveBeenCalled();
   });
 
+  it("hides models that report supportsFunctionCalling: false (e.g. e2ee-gemma-4-31b) from the registered model list", async () => {
+    // pi always sends its built-in tools, and Venice 400s on `tools` for
+    // non-function-calling models. Such models are filtered out before
+    // registration so they can't be selected and can't 400.
+    process.env.VENICE_API_KEY = "test-key";
+    (fetchVeniceModels as any).mockResolvedValue([
+      makeModel({ id: "google-gemma-4-31b-it", supportsFunctionCalling: true }),
+      makeModel({ id: "e2ee-gemma-4-31b", supportsFunctionCalling: false }),
+    ]);
+
+    const { pi, registerProvider } = createMockPi();
+    await factory(pi);
+
+    const config = registerProvider.mock.calls[0][1];
+    const ids = (config.models as any[]).map((m) => m.id);
+    expect(ids).toEqual(["google-gemma-4-31b-it"]);
+    expect(ids).not.toContain("e2ee-gemma-4-31b");
+  });
+
+  it("registers no models (and notifies about missing models) when every Venice model lacks function calling", async () => {
+    process.env.VENICE_API_KEY = "test-key";
+    (fetchVeniceModels as any).mockResolvedValue([
+      makeModel({ id: "e2ee-a", supportsFunctionCalling: false }),
+      makeModel({ id: "e2ee-b", supportsFunctionCalling: false }),
+    ]);
+
+    const { pi, registerProvider, handlers } = createMockPi();
+    await factory(pi);
+
+    const config = registerProvider.mock.calls[0][1];
+    expect(config.models).toEqual([]);
+
+    const ctx = createMockCtx();
+    await handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("No models available"),
+      "warning",
+    );
+  });
+
   it("wires the provider with the venice base URL, openai-completions API, and resolved API key", async () => {
     process.env.VENICE_API_KEY = "wired-key";
     (fetchVeniceModels as any).mockResolvedValue([makeModel()]);

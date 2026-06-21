@@ -8,6 +8,7 @@ import {
   loadCachedModels,
   saveCachedModels,
   fetchVeniceModels,
+  supportsFunctionCalling,
   CACHE_TTL_MS,
   FETCH_TIMEOUT_MS,
 } from "../lib";
@@ -284,5 +285,16 @@ describe("fetchVeniceModels", () => {
     await vi.runAllTimersAsync();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("supportsFunctionCalling", () => {
+  it("returns true when the spec advertises supportsFunctionCalling: true", () => {
+    expect(supportsFunctionCalling(makeModel({ supportsFunctionCalling: true }))).toBe(true);
+  });
+
+  it("returns false when the spec reports supportsFunctionCalling: false", () => {
+    // e2ee-gemma-4-31b reports supportsFunctionCalling: false.
+    expect(supportsFunctionCalling(makeModel({ supportsFunctionCalling: false }))).toBe(false);
   });
 });
