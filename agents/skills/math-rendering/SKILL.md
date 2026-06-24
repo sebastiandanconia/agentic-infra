@@ -1,3 +1,8 @@
+---
+name: math-rendering
+description: Enforces terminal-first math output standards. Renders math as Unicode pretty-math in chat by default and avoids Markdown math delimiters ($...$, $$...$$) unless the user explicitly asks for them. Writes formal derivations, proofs, and equation sets to LaTeX .tex artifacts under the default path artifacts/math/<name>.tex, optionally split into notes.tex (equations only) and full.tex (standalone document with preamble). In combined mode, gives a brief Unicode summary in chat plus the full .tex artifact path. Use when displaying equations, derivations, proofs, or any non-trivial math.
+---
+
 # Math Output Standards (terminal-first):
  - Default math rendering in chat: Unicode pretty-math.
  - Do not use Markdown math delimiters ($...$, $$...$$) unless user explicitly asks.
