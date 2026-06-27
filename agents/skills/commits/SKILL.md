@@ -16,6 +16,31 @@
 - Do not create, rename, or delete branches without explicit instruction.
 - Do not merge or rebase branches without explicit instruction.
 
+## Commit Message Format
+
+- Subject line: Capitalize first word, imperative mood, no period
+  - Good: "Add Ralph role for persistent execution"
+  - Bad: "add ralph role" (not capitalized)
+  - Bad: "feat: add ralph role" (no conventional commit prefixes)
+  - Bad: "Added ralph role" (not imperative mood)
+  - Bad: "Add Ralph role." (no trailing period)
+- Body: Wrap at 72 characters, explain what and why (not how)
+- Blank line between subject and body
+- Use bullet points for multiple changes in body
+- Reference issue numbers if applicable
+
+Example:
+```
+Add Ralph role for persistent execution
+
+Ralph provides completion discipline through iteration loops:
+- Requires fresh evidence before claiming done
+- Auto-retries on failure, escalates after 3 identical errors
+- Persists state for resume capability
+
+Enables autonomous task completion similar to oh-my-codex $ralph mode.
+```
+
 ## Commit Hygiene
 
 - Each commit must leave the codebase in a non-broken state.
