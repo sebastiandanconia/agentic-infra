@@ -1,0 +1,19 @@
+#ACTION   SOURCE   DEST   PROTO   DESTPORT(S)
+
+# What stays reachable when the firewall is `shorewall stop`ped.
+# Keep SSH alive both ways so you never lock yourself out.
+ACCEPT    -        fw     tcp     22
+ACCEPT    fw       -      tcp     22
+
+###############################################################################
+# Compute worker nodes may be booted from NFS, so ensure that NFS remains
+# available at all times.
+#
+# rpcbind/portmapper(111), nfsd(2049), mountd(20048),
+# lockd(32765), statd(32767). TCP and UDP both, to be safe.
+ACCEPT   fw   -   tcp   111,2049,20048,32765,32767
+ACCEPT   fw   -   udp   111,2049,20048,32765,32767
+#
+# Needed for NFSv3 callbacks (statd/lockd) from server -> client.
+ACCEPT   -   fw
+###############################################################################

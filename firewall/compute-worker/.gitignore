@@ -1,0 +1,9 @@
+# Ignore Shorewall "param" files. Treat IP addresses and hostnames as secrets.
+shorewall/params
+shorewall/firewall
+shorewall/firewall.conf
+shorewall/capabilities
+shorewall6/params
+shorewall6/firewall
+shorewall6/firewall.conf
+shorwall6/capabilities

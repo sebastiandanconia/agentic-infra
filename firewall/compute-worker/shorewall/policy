@@ -1,0 +1,9 @@
+#SOURCE   DEST    POLICY     LOGLEVEL   LIMIT
+#
+# Standalone host: the node itself may reach the public Internet but must NOT
+# roam the private network. Everything else is denied by default.
+fw        net     ACCEPT
+fw        lan     DROP       info
+net       fw      DROP       info
+lan       fw      DROP       info
+all       all     DROP       info

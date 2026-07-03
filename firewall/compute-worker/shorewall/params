@@ -1,0 +1,15 @@
+###############################################################################
+# Shorewall 5.2 params
+###############################################################################
+#
+# Assign any variables that you need here. It is suggested that variable names begin with
+# an upper case letter to distinguish them from variables used internally within the
+# Shorewall programs.
+
+NET_IF="eth0"
+S3_SERVER="10.11.14.45"
+NFS_SERVER="10.11.14.52"
+DNS_SERVER_PRIMARY="10.11.14.1"
+DNS_SERVER_SECONDARY="10.11.14.2"
+
+#LAST LINE -- DO NOT REMOVE

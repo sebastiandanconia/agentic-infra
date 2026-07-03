@@ -1,0 +1,13 @@
+#ZONE   INTERFACE   OPTIONS
+#
+# $NET_IF is the only interface. All of it is `net` by default; RFC 1918 ranges
+# are carved out into `lan` via the hosts file.
+#
+# Options:
+#   dhcp        allow DHCP client traffic (harmless if the address is static)
+#   tcpflags    validate TCP flag combinations, drop illegal ones
+#   nosmurfs    drop packets with a broadcast/multicast source
+#   logmartians log martian (impossible) source addresses
+#   routefilter enable reverse-path filtering (rp_filter)
+#
+net     $NET_IF   -    dhcp,tcpflags,nosmurfs,logmartians,routefilter

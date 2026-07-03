@@ -1,0 +1,33 @@
+###############################################################################
+# Shorewall 5.2 rules -- compute-worker (IPv4), AI worker node
+# Columns: ACTION  SOURCE  DEST  PROTO  DESTPORT(S)  SOURCEPORT(S) ...
+###############################################################################
+
+# In addition to this firewall, compute nodes are inside a DMZ VLAN.
+# They may be booted via NFS, therefore NFSv3 ports must be available.
+
+# --- SSH (IN + OUT) ----------------------------------------------------------
+# Inbound SSH from anywhere (public + private). Outbound SSH to anywhere.
+ACCEPT   all    all     tcp   22
+# fw->net:22 is already permitted by the fw->net ACCEPT policy.
+
+# --- ICMP: ping + essential types -------------------------------------------
+Ping(ACCEPT)       all   all
+AllowICMPs(ACCEPT) all   all
+
+# --- DNS (Internal resolvers) -----------------------------------------------
+DNS(ACCEPT)   fw   lan:$DNS_SERVER_PRIMARY
+DNS(ACCEPT)   fw   lan:$DNS_SERVER_SECONDARY
+
+# --- NFS client: mount shares on $NFS_SERVER --------------------------------
+# rpcbind/portmapper(111), nfsd(2049), mountd(20048),
+# lockd(32765), statd(32767). TCP and UDP both, to be safe.
+ACCEPT   fw   lan:$NFS_SERVER   tcp   111,2049,20048,32765,32767
+ACCEPT   fw   lan:$NFS_SERVER   udp   111,2049,20048,32765,32767
+
+# --- NFS server may originate anything to this node -------------------------
+# Needed for NFSv3 callbacks (statd/lockd) from server -> client.
+ACCEPT   lan:$NFS_SERVER   fw
+
+# --- $S3_SERVER:9000 (MinIO/RustFS-style object store service) --------------
+ACCEPT   fw   lan:$S3_SERVER   tcp   9000
