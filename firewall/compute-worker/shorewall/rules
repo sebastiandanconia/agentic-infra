@@ -6,18 +6,20 @@
 # In addition to this firewall, compute nodes are inside a DMZ VLAN.
 # They may be booted via NFS, therefore NFSv3 ports must be available.
 
-# --- SSH (IN + OUT) ----------------------------------------------------------
-# Inbound SSH from anywhere (public + private). Outbound SSH to anywhere.
-ACCEPT   all    all     tcp   22
-# fw->net:22 is already permitted by the fw->net ACCEPT policy.
+# --- SSH (Authorized Controller(s)) -------------------------------------------
+# Inbound SSH from Control Host/Network
+ACCEPT   net:$CONTROL    fw     tcp   22
 
 # --- ICMP: ping + essential types -------------------------------------------
-Ping(ACCEPT)       all   all
+Ping(ACCEPT)       all   fw
+Ping(ACCEPT)       fw    net:$ROUTER
+Ping(ACCEPT)       fw    net:$DNS_SERVER_PRIMARY
+Ping(ACCEPT)       fw    net:$DNS_SERVER_BOTS
 AllowICMPs(ACCEPT) all   all
 
 # --- DNS (Internal resolvers) -----------------------------------------------
 DNS(ACCEPT)   fw   net:$DNS_SERVER_PRIMARY
-DNS(ACCEPT)   fw   net:$DNS_SERVER_SECONDARY
+DNS(ACCEPT)   fw   net:$DNS_SERVER_BOTS
 
 # --- NFS client: mount shares on $NFS_SERVER --------------------------------
 # rpcbind/portmapper(111), nfsd(2049), mountd(20048),
@@ -37,3 +39,9 @@ ACCEPT   fw   net:$S3_SERVER   tcp   9000
 DROP   fw   net:10.0.0.0/8
 DROP   fw   net:172.16.0.0/12
 DROP   fw   net:192.168.0.0/16
+
+# Drop all multicast
+DROP   all   all:224.0.0.0/4
+
+# Drop all broadcast packets (both directed and limited broadcasts)
+INLINE     net    fw  ;; -m addrtype --dst-type BROADCAST -j DROP

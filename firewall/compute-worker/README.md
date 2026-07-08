@@ -4,23 +4,15 @@ Shorewall (IPv4) ruleset for a single AI worker node — a standalone host firew
 
 ## Design
 
-One interface (`eth0`) is split into two zones by *destination address*:
-
 - `fw` — The host itself (always named `fw` in Shorewall).
-- `net` — Everything that is NOT RFC 1918 (IPv4) / ULA `fc00::/7` (IPv6), i.e. the public Internet.
-- `lan` — RFC 1918 space (IPv4) / ULA (IPv6), i.e. the private network.
+- `net` — Everything else, i.e. the public Internet.
 
 Default policy:
 
 | From | To  | Policy | Reason |
 |------|-----|--------|--------|
 | fw   | net | ACCEPT | Node may reach the public Internet |
-| fw   | lan | DROP   | Node must NOT roam the private network |
-| net  | fw  | DROP   | Nothing from outside unless a rule allows it |
-| lan  | fw  | DROP   | Nothing from the private net unless a rule allows it |
 | all  | all | DROP   | Catch-all |
-
-Every requirement is an exception (rule) punched through the DROP policies. Return traffic for connections the node itself opens is handled by conntrack (ESTABLISHED/RELATED), so it needs no explicit rules.
 
 ## Layout
 
@@ -44,16 +36,14 @@ Shorewall supports `shorewall/params` for defining variables that are expanded w
 +S3_SERVER="10.11.14.45"
 +NFS_SERVER="10.11.14.52"
 +DNS_SERVER_PRIMARY="10.11.14.1"
-+DNS_SERVER_SECONDARY="10.11.14.2"
++DNS_SERVER_BOTS="10.11.37.2"
 +
 +#LAST LINE -- DO NOT REMOVE
 ```
 
 ## Things to check / edit before starting
 
-1. **Interface name.** Configs assume `eth0`. Confirm with `ip -br link` and
-   change it in `shorewall/interfaces` and `shorewall6/interfaces` if different
-   (e.g. `ens3`, `enp3s0`).
+1. **Interface name.** Configs assume `eth0`. Confirm with `ip -br link` and change it in `shorewall/interfaces` if different (e.g. `ens3`, `enp3s0`).
 
 2. **Params file** This file contains a list of variables that are expanded at firewall compile time. Add this file (or modify the other shorewall configuration files) to fit your own network. See the example in this README.
 
