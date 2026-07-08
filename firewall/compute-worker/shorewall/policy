@@ -1,9 +1,7 @@
 #SOURCE   DEST    POLICY     LOGLEVEL   LIMIT
 #
-# Standalone host: the node itself may reach the public Internet but must NOT
-# roam the private network. Everything else is denied by default.
+# Standalone host: The node has access to the public Internet. Access to LAN (RFC 1918) is blocked
+# except for whitelisted addresses. This is implemented in the `rules` file.
 fw        net     ACCEPT
-fw        lan     DROP       info
 net       fw      DROP       info
-lan       fw      DROP       info
 all       all     DROP       info

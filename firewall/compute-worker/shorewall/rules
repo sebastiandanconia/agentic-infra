@@ -16,18 +16,24 @@ Ping(ACCEPT)       all   all
 AllowICMPs(ACCEPT) all   all
 
 # --- DNS (Internal resolvers) -----------------------------------------------
-DNS(ACCEPT)   fw   lan:$DNS_SERVER_PRIMARY
-DNS(ACCEPT)   fw   lan:$DNS_SERVER_SECONDARY
+DNS(ACCEPT)   fw   net:$DNS_SERVER_PRIMARY
+DNS(ACCEPT)   fw   net:$DNS_SERVER_SECONDARY
 
 # --- NFS client: mount shares on $NFS_SERVER --------------------------------
 # rpcbind/portmapper(111), nfsd(2049), mountd(20048),
 # lockd(32765), statd(32767). TCP and UDP both, to be safe.
-ACCEPT   fw   lan:$NFS_SERVER   tcp   111,2049,20048,32765,32767
-ACCEPT   fw   lan:$NFS_SERVER   udp   111,2049,20048,32765,32767
+ACCEPT   fw   net:$NFS_SERVER   tcp   111,2049,20048,32765,32767
+ACCEPT   fw   net:$NFS_SERVER   udp   111,2049,20048,32765,32767
 
 # --- NFS server may originate anything to this node -------------------------
 # Needed for NFSv3 callbacks (statd/lockd) from server -> client.
-ACCEPT   lan:$NFS_SERVER   fw
+ACCEPT   net:$NFS_SERVER   fw
 
 # --- $S3_SERVER:9000 (MinIO/RustFS-style object store service) --------------
-ACCEPT   fw   lan:$S3_SERVER   tcp   9000
+ACCEPT   fw   net:$S3_SERVER   tcp   9000
+
+# --- Block the rest of RFC 1918 Private Networks from the node ---------------
+# Public Internet falls through to fw->net ACCEPT.
+DROP   fw   net:10.0.0.0/8
+DROP   fw   net:172.16.0.0/12
+DROP   fw   net:192.168.0.0/16
