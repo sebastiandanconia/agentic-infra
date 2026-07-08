@@ -15,7 +15,7 @@ Ping(ACCEPT)       all   fw
 Ping(ACCEPT)       fw    net:$ROUTER
 Ping(ACCEPT)       fw    net:$DNS_SERVER_PRIMARY
 Ping(ACCEPT)       fw    net:$DNS_SERVER_BOTS
-AllowICMPs(ACCEPT) all   all
+AllowICMPs(ACCEPT) all   fw
 
 # --- DNS (Internal resolvers) -----------------------------------------------
 DNS(ACCEPT)   fw   net:$DNS_SERVER_PRIMARY
