@@ -1,0 +1,13 @@
+[Unit]
+Description=Add nftables rules to Docker DOCKER-USER chain for LXC dev-net
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nft-post-docker.sh
+RemainAfterExit=yes
+ExecStop=/bin/true
+
+[Install]
+WantedBy=multi-user.target
