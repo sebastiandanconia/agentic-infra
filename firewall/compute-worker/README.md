@@ -14,15 +14,9 @@ Default policy:
 | fw   | net | ACCEPT | Node may reach the public Internet |
 | all  | all | DROP   | Catch-all |
 
-## Layout
-
-```
-shorewall/      -> copy to /etc/shorewall   (IPv4)
-```
-
 ## `params` file (Optional)
 
-Shorewall supports `shorewall/params` for defining variables that are expanded within Shorewall's other configuration files at compile time. This helps with applying the "Don't Repeat Yourself" principle, but it's also a good way of keeping hostnames and IP addresses out of Git, as we're doing here. Here's an example of a `shorewall/params` file you might add as a step toward making this Shorewall setup ready to use. If you don't use `params` files, you should instead replace every instance of `$VARIABLE` in the other configuration files with the values that apply to you:
+Shorewall supports `shorewall/params` for defining variables that are expanded within Shorewall's other configuration files at compile time. This helps with applying the "Don't Repeat Yourself" principle, and is also a good way of keeping hostnames and IP addresses out of Git, as we're doing here. Here's an example of a `shorewall/params` file you might add as a step toward making this Shorewall setup ready to use. If you don't use `params` files, you should instead replace every instance of `$VARIABLE` in the other configuration files with the values that apply to you:
 ```
 +###############################################################################
 +# Shorewall 5.2 params
@@ -41,26 +35,61 @@ Shorewall supports `shorewall/params` for defining variables that are expanded w
 +#LAST LINE -- DO NOT REMOVE
 ```
 
-## Things to check / edit before starting
+## Things to Check / Edit Before Starting
 
-1. **Interface name.** Configs assume `eth0`. Confirm with `ip -br link` and change it in `shorewall/interfaces` if different (e.g. `ens3`, `enp3s0`).
+1. **Interface name.** Display with `ip -br link` and add/change it in `shorewall/params` or `shorewall/interfaces`.
 
-2. **Params file** This file contains a list of variables that are expanded at firewall compile time. Add this file (or modify the other shorewall configuration files) to fit your own network. See the example in this README.
+2. **Params file** This file contains a list of variables that are expanded at firewall compile time. Add this file (or modify the other shorewall configuration files) to fit your own network. See the example above.
 
-## Install
+## Install shorewall(-lite)
+
+`shorewall` is a complete program for compiling and locally installing a firewall on a system. For the use case of a cluster of worker hosts, it's recommended instead to use `shorewall` on a controller host to maintain and compile the firewall configuration, and install `shorewall-lite` on the workers themselves.
+
+### Controller Host
 
 ```
 sudo apt install shorewall
-sudo cp -r shorewall/*  /etc/shorewall/
 ```
 
-## Validate (does NOT touch the running firewall)
+### Worker Host
 
 ```
-sudo shorewall  check
+sudo apt install shorewall-lite
 ```
 
-## Start — safely (auto-reverts if you lock yourself out)
+### Shorewall-Lite capabilities
+
+From the `shorewall` directory on your controller host:
+```bash
+ssh root@example.com "shorewall-lite -f capabilities" > capabilities
+```
+
+for each different configuration of worker host you manage. This tells your central `shorewall` what networking features are available on each worker host. After your central `shorewall` has a `capabilities` file for the worker host, you can compile the firewall for that host.
+
+
+### LOGFILE Error
+
+If you get an error similar to:
+```
+   ERROR: LOGFILE (/var/log/messages) does not exist or is not readable!
+```
+
+You'll need to edit `/etc/shorewall/shorewall.conf` or `/etc/shorewall-lite/shorewall-lite.conf` on the affected system. You should set `LOGFILE` to match the log facilities available on your system, for example:
+- `LOGFILE=systemd`
+- `LOGFILE=/var/log/syslog`
+
+## Validate
+
+Check your firewall configuration without applying it anywhere:
+```
+sudo shorewall  check .
+```
+
+## Start
+
+### shorewall
+
+**NOTE: This section applies only if you're managing your firewall configuration on the same system the firewall is protecting. (Not recommended.)**
 
 ```
 # Apply for 120 s; reverts unless you confirm with `shorewall restart`:
@@ -70,10 +99,29 @@ sudo shorewall  try /etc/shorewall  120
 ( sudo crontab -l 2>/dev/null; echo '*/3 * * * * /sbin/shorewall stop' ) | sudo crontab -
 ```
 
-Once you confirm SSH etc. still work, make it permanent:
+Once you confirm your network services (e.g. SSH) still work, make your configuration permanent:
 
 ```
-sudo systemctl enable --now shorewall shorewall6
+sudo systemctl enable --now shorewall
+```
+
+### shorewall-lite
+
+**This is the recommended configuration.**
+
+From the `shorewall` directory on your controller host:
+```
+shorewall remote-reload example.com
+```
+or
+```
+shorewall remote-restart example.com
+```
+NOTE: Although the above commands are intended to "fail safe" on remote systems, they can easily mess up a system using an NFS root file system, requiring a hard reboot.
+
+If the process completes, your network services still work on the worker node, and you wish these settings to be applied upon reboot, from the worker node execute:
+```
+shorewall-lite save
 ```
 
 ## Notes
