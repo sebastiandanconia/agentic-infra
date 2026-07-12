@@ -1,0 +1,67 @@
+# Create:  lxc profile create agentic-dev
+# Apply:   lxc profile edit agentic-dev < examples/lxd-agentic-dev-profile.yaml
+#
+# Shared security and resource envelope for agentic development containers.
+# Instance-specific items (static IP, bind-mounted source trees) are attached
+# per container after launch — keep them out of this profile.
+
+name: agentic-dev
+description: >
+  Hardened, resource-capped profile for software development containers that
+  host AI coding agents. Unprivileged, no swap, isolated UID map, no nesting.
+
+config:
+  # ── Resource caps ─────────────────────────────────────────────
+  # Size these to the host. A runaway agent should hit a ceiling long
+  # before the laptop becomes unusable.
+  limits.cpu: "8"
+  # Soft cap: may burst, but average use is steered toward 90%.
+  # Use a hard quota form (for example 25ms/100ms) if you need a hard ceiling.
+  # Remove this key for unrestricted burst within limits.cpu.
+  limits.cpu.allowance: 85%
+  limits.memory: 8GB
+  # Prefer OOM-kill over swap thrash when an agent leaks memory.
+  limits.memory.swap: "false"
+  limits.processes: "2000"
+  # I/O priority 1 (low) – 10 (high)
+  limits.disk.priority: "5"
+
+  # ── Security ──────────────────────────────────────────────────
+  # Unprivileged is the single most important control. Never set true
+  # for agent workloads.
+  security.privileged: "false"
+  # No nested LXD/Docker. Turn nesting on only if the agent must run
+  # containers inside this container, and revisit the rest of the profile.
+  security.nesting: "false"
+  # Unique UID/GID map among isolated instances: uid 1000 inside is not
+  # the same kernel uid as 1000 on the host or in a sibling container.
+  security.idmap.isolated: "true"
+  # Emulate mknod/setxattr safely so package installs that need them
+  # succeed without granting real capability.
+  security.syscalls.intercept.mknod: "true"
+  security.syscalls.intercept.setxattr: "true"
+  # Leave LXD's generated AppArmor profile in place. Empty raw.apparmor
+  # means "no extra raw rules"; do not confuse this with disabling AppArmor.
+  raw.apparmor: ""
+
+  # ── Boot ──────────────────────────────────────────────────────
+  # Agents are started deliberately, not at every host boot.
+  boot.autostart: "false"
+  boot.autostart.delay: "5"
+  boot.autostart.priority: "10"
+
+  # ── Environment ───────────────────────────────────────────────
+  environment.LANG: en_US.UTF-8
+  # Change to your timezone
+  environment.TZ: America/Argentina/Buenos_Aires
+
+devices:
+  root:
+    path: /
+    pool: default
+    size: 50GB
+    type: disk
+  eth0:
+    name: eth0
+    network: dev-net
+    type: nic

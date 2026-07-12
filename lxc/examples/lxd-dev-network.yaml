@@ -1,0 +1,38 @@
+# Create:  lxc network create dev-net
+# Apply:   lxc network edit dev-net < examples/lxd-dev-network.yaml
+#
+# Bridge used by agentic development containers. LXD owns DHCP, DNS, and
+# outbound NAT (masquerade). Pair this with the host nftables rules in
+# ../firewall so LXC traffic coexists with Docker.
+
+name: dev-net
+description: LXD bridge for agentic development containers
+config:
+  bridge.mode: standard
+
+  # IPv4 — NAT so containers can reach the internet through the host.
+  # Set ipv4.nat to "false" (or remove it after setting a routed setup) for
+  # full network isolation with no outbound masquerade.
+  ipv4.address: 10.76.68.10/24
+  ipv4.dhcp: "true"
+  # Keep DHCP above .99 so low addresses stay free for static instance IPs
+  # (for example pi-dev at 10.76.68.20 via the nic device ipv4.address).
+  ipv4.dhcp.ranges: 10.76.68.100-10.76.68.200
+  ipv4.nat: "true"
+  # LXD installs its own filtering/NAT rules for this bridge. The host
+  # firewall in ../firewall is written with that assumption.
+  ipv4.firewall: "true"
+
+  # Disable IPv6 on this bridge to shrink the attack surface unless you
+  # explicitly need it.
+  ipv6.address: none
+  ipv6.nat: "false"
+  ipv6.dhcp: "false"
+
+  # Managed DNS: containers register as <instance-name>.lan.
+  # On the host, integrate LXD with systemd-resolved if you want those
+  # names to resolve outside the bridge (see the README).
+  dns.mode: managed
+  dns.domain: lan
+
+type: bridge

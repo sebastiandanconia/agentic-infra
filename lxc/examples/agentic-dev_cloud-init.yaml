@@ -1,0 +1,86 @@
+#cloud-config
+# First-boot guest bootstrap for the agentic-dev profile.
+#
+# Passed at launch (from the lxc/ directory):
+#   lxc launch ubuntu:24.04 pi-dev \
+#     --profile agentic-dev \
+#     --config=user.user-data="$(cat examples/agentic-dev_cloud-init.yaml)"
+#
+# cloud-init runs once on first boot. Changes here do not apply to an
+# already-initialized instance; rebuild or re-run equivalent commands by hand.
+#
+# Replace the ssh_authorized_keys entry with your real public key before launch.
+
+users:
+  - name: sebastian
+    gecos: Sebastian D'Anconia
+    groups: [sudo]
+    shell: /bin/bash
+    # Full passwordless sudo inside the container. The security boundary is
+    # the container and the host firewall, not fine-grained sudoers. For a
+    # tighter guest, drop this line and install a restricted sudoers file
+    # instead (see the commented write_files example below).
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      # Replace this entire string with the contents of your host's ~/.ssh/*.pub file
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMibbK32M+yWJmXzENlJ3mKnE2kQhE0Z3pR0c8yplaceholder sebastian@salamanca
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - openssh-server
+  - git
+  - curl
+  - wget
+  - ca-certificates
+  - gnupg
+  - build-essential
+  - python3
+  - python3-pip
+  - python3-venv
+  - jq
+  - unzip
+
+timezone: America/Argentina/Buenos_Aires
+
+write_files:
+  # Harden SSH: keys only, no root login, only the agent user
+  - path: /etc/ssh/sshd_config.d/99-container-hardening.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      PubkeyAuthentication yes
+      PermitRootLogin no
+      X11Forwarding no
+      AllowTcpForwarding yes
+      AllowUsers sebastian
+      ClientAliveInterval 60
+      ClientAliveCountMax 3
+
+  # Optional tighter sudo (only if you remove sudo: NOPASSWD:ALL above):
+  # - path: /etc/sudoers.d/sebastian-restrictions
+  #   owner: root:root
+  #   permissions: "0440"
+  #   content: |
+  #     sebastian ALL=(ALL) NOPASSWD: /usr/bin/apt, /usr/bin/apt-get
+  #     sebastian ALL=(ALL) NOPASSWD: /usr/bin/systemctl start *, /usr/bin/systemctl stop *
+  #     sebastian ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *, /usr/bin/systemctl status *
+
+runcmd:
+  - systemctl enable ssh
+  - systemctl restart ssh
+  - mkdir -p /home/sebastian/src
+  - chown -R sebastian:sebastian /home/sebastian/src
+  # Optional: drop the image's default ubuntu user if the image created one
+  # - id ubuntu >/dev/null 2>&1 && userdel -r ubuntu || true
+
+  # Prefer installing language toolchains (nvm, pi-coding-agent, etc.) after
+  # first boot from a re-runnable script — versions change faster than this
+  # file should. See the README "Agent tooling" section.
+
+final_message: |
+  pi-dev container is ready.
+  SSH: ssh sebastian@10.76.68.20
+  (Use the static address you assign on the nic device, or pi-dev.lan if resolved.)
