@@ -1,0 +1,24 @@
+# playbooks/install_packages.yml
+---
+- name: Install packages
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    agent_user: ansible
+    agent_user_shell: /bin/bash
+
+  tasks:
+    - name: Install packages
+      ansible.builtin.apt:
+        name:
+          - rsync
+          - dnsutils
+          - htop
+          - iftop
+          - btop
+          - iperf3
+        state: present
+        update_cache: true
+

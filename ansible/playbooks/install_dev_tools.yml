@@ -1,0 +1,136 @@
+# playbooks/install_dev_tools.yml
+---
+- name: Install nvm and rustup
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # User to install tools for — defaults to the connecting ansible user
+    target_user: "{{ ansible_user | default('ansible') }}"
+
+    # nvm version (check https://github.com/nvm-sh/nvm/releases for latest)
+    nvm_version: "0.40.1"
+
+    # Node.js version to install via nvm (set to empty string to skip)
+    nvm_node_version: "22"
+
+    # Rust toolchain to install (stable, beta, nightly, or e.g. "1.82.0")
+    rustup_toolchain: "stable"
+
+  tasks:
+    - name: Install acl package for setfacl
+      ansible.builtin.apt:
+        name: acl
+        state: present
+
+    - name: Ensure curl is installed
+      ansible.builtin.apt:
+        name: curl
+        state: present
+        update_cache: true
+
+    - name: Get target user home directory
+      ansible.builtin.command: getent passwd {{ target_user }}
+      register: passwd_entry
+      changed_when: false
+
+    - name: Set home directory fact
+      ansible.builtin.set_fact:
+        target_home: "{{ passwd_entry.stdout.split(':')[5] }}"
+
+    # --- nvm ---
+
+    - name: Install nvm
+      ansible.builtin.shell: |
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v{{ nvm_version }}/install.sh | bash
+      args:
+        creates: "{{ target_home }}/.nvm/nvm.sh"
+        executable: /bin/bash
+      become_user: "{{ target_user }}"
+      environment:
+        HOME: "{{ target_home }}"
+
+    - name: Check if Node.js {{ nvm_node_version }} is installed
+      ansible.builtin.shell: |
+        source {{ target_home }}/.nvm/nvm.sh
+        nvm ls {{ nvm_node_version }} --no-colors 2>/dev/null | grep -q "v{{ nvm_node_version }}"
+      args:
+        executable: /bin/bash
+      become_user: "{{ target_user }}"
+      environment:
+        HOME: "{{ target_home }}"
+      register: node_check
+      changed_when: false
+      failed_when: false
+      when: nvm_node_version | length > 0
+
+    - name: Install Node.js {{ nvm_node_version }} via nvm
+      ansible.builtin.shell: |
+        source {{ target_home }}/.nvm/nvm.sh
+        nvm install {{ nvm_node_version }}
+        nvm alias default {{ nvm_node_version }}
+      args:
+        executable: /bin/bash
+      become_user: "{{ target_user }}"
+      environment:
+        HOME: "{{ target_home }}"
+      when: nvm_node_version | length > 0 and node_check.rc | default(1) != 0
+
+    # --- rustup ---
+
+    - name: Install rustup
+      ansible.builtin.shell: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain {{ rustup_toolchain }}
+      args:
+        creates: "{{ target_home }}/.cargo/bin/rustup"
+        executable: /bin/bash
+      become_user: "{{ target_user }}"
+      environment:
+        HOME: "{{ target_home }}"
+
+    - name: Check installed Rust toolchains
+      ansible.builtin.command: "{{ target_home }}/.cargo/bin/rustup toolchain list"
+      become_user: "{{ target_user }}"
+      environment:
+        HOME: "{{ target_home }}"
+      register: rust_toolchains
+      changed_when: false
+      failed_when: false
+
+    - name: Install Rust {{ rustup_toolchain }} toolchain if not present
+      ansible.builtin.command: >
+        {{ target_home }}/.cargo/bin/rustup toolchain install {{ rustup_toolchain }} --default
+      become_user: "{{ target_user }}"
+      environment:
+        HOME: "{{ target_home }}"
+      when: rustup_toolchain not in rust_toolchains.stdout
+
+    # --- Verification ---
+
+    - name: Verify nvm
+      ansible.builtin.shell: |
+        source {{ target_home }}/.nvm/nvm.sh
+        nvm --version
+      args:
+        executable: /bin/bash
+      become_user: "{{ target_user }}"
+      environment:
+        HOME: "{{ target_home }}"
+      register: nvm_verify
+      changed_when: false
+
+    - name: Verify rustup
+      ansible.builtin.command: "{{ target_home }}/.cargo/bin/rustup --version"
+      become_user: "{{ target_user }}"
+      environment:
+        HOME: "{{ target_home }}"
+      register: rustup_verify
+      changed_when: false
+
+    - name: Show installed versions
+      ansible.builtin.debug:
+        msg:
+          - "nvm: {{ nvm_verify.stdout }}"
+          - "rustup: {{ rustup_verify.stdout_lines[0] }}"
+          - "Installed for: {{ target_user }} ({{ target_home }})"
