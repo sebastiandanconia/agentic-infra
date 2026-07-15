@@ -31,9 +31,9 @@ BOT_ROWS=$(( ROWS * BOT_PCT / 100 ))
 #   DEV_CMD="lxc exec $CT --env TERM=xterm-256color -- bash -l"
 #   HOST_CMD="bash -l"
 # Dummy versions for layout debugging:
-TOP_CMD="echo '!! TOP: pi in $CT (dummy)'; bash"
-DEV_CMD="echo '!! BOT dev shell in $CT (dummy)'; bash"
-HOST_CMD="echo '!! BOT host shell (dummy)'; bash"
+TOP_CMD="echo '*** TOP: pi in $CT (placeholder)'; bash"
+DEV_CMD="echo '*** BOTTOM dev shell in $CT (placeholder)'; bash"
+HOST_CMD="echo '*** BOTTOM host shell (placeholder)'; bash"
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 
