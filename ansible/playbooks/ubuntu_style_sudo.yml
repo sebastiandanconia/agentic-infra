@@ -22,7 +22,7 @@
 
     - name: Deploy sudoers file — sudo group with password
       ansible.builtin.template:
-        src: ../templates/sudoers_ubuntu.j2
+        src: ../templates/sudoers.j2
         dest: /etc/sudoers
         owner: root
         group: root
