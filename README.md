@@ -15,8 +15,9 @@ The durable answer is not more confirmation dialogs. It is the same layered secu
 - **Configure** workers declaratively so a second host does not mean a second snowflake.
 - **Instruct** agents with portable policies and on-demand skills so behavior is consistent without burning context on every turn.
 - **Operate** the session so SSH drops, vertical monitors, and multi-pane workflows do not interrupt the agent.
+- **Choose inference** so prompts, tool traces, and source excerpts are not retained by default once they leave the host.
 
-`agentic-infra` implements that stack as readable examples you can adapt, not as a black-box installer.
+`agentic-infra` implements the stack as readable examples you can adapt, not as a black-box installer.
 
 ## Architecture
 
@@ -49,13 +50,24 @@ Read the module READMEs in full. They are the teaching material: rationale, fail
 These choices recur across the tree. They are intentional and worth copying into your own infrastructure.
 
 1. **Autonomy with a recoverable worst case.** Prefer YOLO-mode agents inside unprivileged LXD over constant human approval. Snapshots, resource caps, and network defaults make “the agent destroyed the environment” a restore, not an incident.
-2. **Defense in depth, not sandbox theatre.** Isolation is a coherent set of mechanisms (UID maps, cgroups, AppArmor/seccomp, host netfilter, secrets policy)—not a single container flag waved at auditors.
+2. **Defense in depth, not sandbox theatre.** Isolation is a coherent set of mechanisms (UID maps, cgroups, AppArmor/seccomp, host netfilter, secrets policy, retention-aware inference)—not a single container flag waved at auditors.
 3. **Declarative identity, imperative bootstrap.** LXD networks/profiles and Ansible plays express desired state. cloud-init is first-boot bake only. Instance devices (static IP, disk mounts) stay per-container so shared profiles remain portable.
 4. **Coexistence is a first-class requirement.** Real developer machines run LXD *and* Docker. The firewall examples document the boot order, the dual-stack (nftables + iptables) trap, and the post-Docker repair path instead of pretending Docker is absent.
 5. **Progressive disclosure for agent context.** Always-on policies are short and high-value (never read secrets files; clean whitespace). Task-specific procedures live in skills loaded only when relevant, so token cost tracks actual work.
 6. **No secrets in git.** Inventories, host vars, real SSH keys, and environment-specific addresses stay local or vaulted. Public trees hold playbooks, example YAML with placeholders, and documentation.
 7. **Rebuild is a feature.** Short bootstraps and snapshots beat debugging a half-applied guest that an agent has trashed for an hour.
 8. **Teach the why.** Module docs explain mental models, common wrong layouts, and how to validate success—so another engineer (or another agent) can reproduce the setup on real hardware.
+9. **Treat the inference path as a trust boundary.** Local isolation and firewalls protect the host. Zero Data Retention (and TEE-backed models where available) protect the content that must leave the host to be useful. Provider choice is part of the security architecture, not a separate product preference.
+
+## Inference privacy and Zero Data Retention
+
+Most of this repository is about what the agent can touch *on your machines*: unprivileged guests, host netfilter, declarative worker config, and policies that keep secrets out of context. That is necessary yet still incomplete. Coding agents continuously ship prompts, diffs, tool output, and repository excerpts to a remote model API. If that provider retains prompts for training, long-term logs, or broad operational reuse, carefully isolated local infrastructure has only moved the incident surface off-box.
+
+Venice.ai's Zero Data Retention (ZDR) posture is therefore a pillar of the security architecture this tree implements—not a marketing footnote on the harness extension. Many models available through Venice are offered under ZDR policies: request content is not kept as a retained corpus for training or durable provider-side history in the usual retain-by-default sense. Some models additionally run in Trusted Execution Environments (TEEs), where hardware-backed isolation enforces the infrastructure operator's privacy guarantees.
+
+[`pi-extensions/venice-ai`](pi-extensions/venice-ai)'s presence in this repository, over and above being an integration offering wide model choice, is a symbol and instrument of ZDR inference capability in agentic workflows.
+
+ZDR and TEEs are model- and product-tier dependent. Confirm the current Venice policy and model attributes for the specific models you enable before treating them as part of a compliance or threat model.
 
 ## Repository map
 
@@ -91,7 +103,7 @@ The agents README is a short course in progressive disclosure: what belongs in e
 
 ### [`pi-extensions/`](pi-extensions/) — Pi harness extensions
 
-TypeScript extensions for the Pi coding agent. The `venice-ai` package registers Venice as an inference provider: dynamic model fetch, disk cache with TTL, thin factory over testable library code, Vitest coverage. Illustrates how to keep provider integration maintainable rather than a one-off script.
+TypeScript extensions for the Pi coding agent. The `venice-ai` package registers Venice as an inference provider: dynamic model fetch, disk cache with TTL, thin factory over testable library code, Vitest coverage. Beyond maintainable provider plumbing, it is the practical hook for Venice Zero Data Retention models (and TEE-backed options where available)—the inference-side counterpart to local containment and host policy. Illustrates how to keep provider integration maintainable rather than a one-off script.
 
 ### [`tmux/`](tmux/) — Persistent agent sessions
 
@@ -105,7 +117,7 @@ If your goal is to implement effective AI infrastructure—not merely skim folde
 2. **Host network policy** — Read [`firewall/README.md`](firewall/README.md). Install the base ruleset and post-Docker unit on a lab machine. Run the LXC/Docker connectivity tests and deliberately mismatch LXC↔Docker policy once so you recognize the failure mode.
 3. **Configuration management** — Read [`ansible/README.md`](ansible/README.md). Build a correct inventory layout (file + sibling `group_vars`, or directory with nested vars). Converge packages and a toolchain on the guest.
 4. **Agent instruction design** — Read [`agents/README.md`](agents/README.md). Concatenate policies into an `AGENTS.md` at a sensible scope. Point your harness at `agents/skills/`. Notice which rules must be always-on because loading them “when relevant” is already too late.
-5. **Session and harness** — Use [`tmux/`](tmux/) for long-lived remote sessions. Explore [`pi-extensions/venice-ai`](pi-extensions/venice-ai) if you need a custom provider or want a template for tested extensions.
+5. **Session and harness** — Use [`tmux/`](tmux/) for long-lived remote sessions. Explore [`pi-extensions/venice-ai`](pi-extensions/venice-ai) to wire a ZDR-capable Venice inference path into Pi, or as a template for other provider extensions with unit test coverage.
 6. **Fleet hardening** — Apply [`firewall/compute-worker`](firewall/compute-worker) thinking when workers leave the laptop and become dedicated nodes.
 
 At each step, prefer the module’s validation checklist over “it seemed to work.”
@@ -121,7 +133,7 @@ Familiarity with Linux, SSH, and basic networking is assumed. Prior LXD or Ansib
 ## What this is not
 
 - A managed SaaS product or one-click installer.
-- A claim that containers make agents “safe” without host policy, secrets discipline, and operational practice.
+- A claim that containers make agents “safe” without host policy, secrets discipline, operational practice, and a deliberate inference-retention posture.
 - A full cluster orchestrator, image factory, or secret-management platform. Those concerns are deliberately left to tools designed for them; this repo focuses on the seams that agent workloads actually stress.
 
 ## Getting started
