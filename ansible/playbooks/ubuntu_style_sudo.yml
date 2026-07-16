@@ -1,0 +1,57 @@
+# playbooks/ubuntu_style_sudo.yml
+---
+- name: Configure Ubuntu-style sudo (root locked, users sudo with password)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    sudo_group: sudo
+    sshd_permit_root_login: 'prohibit-password'
+
+  tasks:
+    - name: Ensure sudo is installed
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+
+    - name: Ensure sudo group exists
+      ansible.builtin.group:
+        name: "{{ sudo_group }}"
+        state: present
+
+    - name: Deploy sudoers file — sudo group with password
+      ansible.builtin.template:
+        src: ../templates/sudoers_ubuntu.j2
+        dest: /etc/sudoers
+        owner: root
+        group: root
+        mode: '0440'
+        validate: 'visudo -cf %s'
+        backup: true
+
+    - name: Lock root account — no password, no direct login
+      ansible.builtin.user:
+        name: root
+        password: '!'   # locked, not '!!' (no password set at all)
+
+    - name: Set PermitRootLogin in sshd_config
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*PermitRootLogin'
+        line: 'PermitRootLogin {{ sshd_permit_root_login }}'
+        validate: 'sshd -t -f %s'
+      notify: Restart sshd
+
+    - name: Add specified users to sudo group
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: "{{ sudo_group }}"
+        append: true
+      loop: "{{ sudo_users | default([]) }}"
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.systemd:
+        name: ssh
+        state: restarted

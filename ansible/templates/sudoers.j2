@@ -1,0 +1,16 @@
+{# templates/sudoers.j2 #}
+# Managed by Ansible — do not edit manually
+
+Defaults    env_reset
+Defaults    mail_badpass
+Defaults    secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+root    ALL=(ALL:ALL) ALL
+
+{% if ansible_facts['distribution'] == 'Ubuntu' %}
+%admin  ALL=(ALL) ALL
+{% endif %}
+
+%{{ sudo_group }} ALL=(ALL:ALL) ALL
+
+#includedir /etc/sudoers.d

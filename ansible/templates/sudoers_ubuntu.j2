@@ -1,0 +1,14 @@
+{# templates/sudoers_ubuntu.j2 #}
+# Managed by Ansible — do not edit manually
+
+Defaults    env_reset
+Defaults    mail_badpass
+Defaults    secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Root can run anything
+root    ALL=(ALL:ALL) ALL
+
+# Allow members of group sudo to execute any command
+%{{ sudo_group }} ALL=(ALL:ALL) ALL
+
+@includedir /etc/sudoers.d
