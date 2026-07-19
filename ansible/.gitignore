@@ -1,4 +1,13 @@
-hosts.ini
-inventory
-group_vars
+# Real inventory and variables — environment-specific values stay off git.
+# Examples (*.example.ini, *.example.yml) are committed as templates.
 
+hosts.ini
+inventory.ini
+inventory/
+group_vars/*.yml
+group_vars/*.yaml
+host_vars/
+
+# Re-include committed examples
+!group_vars/*.example.yml
+!group_vars/*.example.yaml
