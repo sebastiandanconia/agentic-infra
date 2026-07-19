@@ -1,8 +1,14 @@
-# playbooks/ubuntu_style_sudo.yml
+# Reusable superuser policy component.
+#
+# Three knobs make it reusable across contexts:
+#   sudo_target_hosts   - which hosts to target (default: all)
+#   sudo_become         - whether to escalate (default: true; set false for
+#                         the chroot connection, which is already root)
+#   sudo_users          - users to add to the sudo group (default: [])
 ---
 - name: Configure Ubuntu-style sudo (root locked, users sudo with password)
-  hosts: all
-  become: true
+  hosts: "{{ sudo_target_hosts | default('all') }}"
+  become: "{{ sudo_become | default(true) }}"
   gather_facts: true
 
   vars:
@@ -55,3 +61,7 @@
       ansible.builtin.systemd:
         name: ssh
         state: restarted
+      # In a chroot build, systemd is not running and ssh isn't started;
+      # the config takes effect when ssh starts on first boot. Skip the
+      # restart there. For live SSH hosts the restart runs as intended.
+      when: ansible_connection != 'chroot'
