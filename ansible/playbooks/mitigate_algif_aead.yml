@@ -1,0 +1,18 @@
+# playbooks/mitigate_algif_aead.yml
+---
+- name: Mitigate CVE-2026-31431 (disable algif_aead module)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Install modprobe blacklist for algif_aead
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/algif.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Mitigate CVE-2026-31431
+          install algif_aead /bin/false
+      when: ansible_os_family == "Debian"
