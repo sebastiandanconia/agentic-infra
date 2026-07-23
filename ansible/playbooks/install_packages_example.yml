@@ -1,6 +1,5 @@
-# playbooks/install_packages.yml
 ---
-- name: Install packages
+- name: Install packages (example)
   hosts: all
   become: true
   gather_facts: true
@@ -21,4 +20,3 @@
           - iperf3
         state: present
         update_cache: true
-
