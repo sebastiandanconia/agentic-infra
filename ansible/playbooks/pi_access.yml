@@ -1,4 +1,17 @@
 ---
+# Configure Pi automation access
+#
+# Design: pi gets its own account for auditability (SSH logs show "pi",
+# not admin user), but runs commands as admin user via `sudo -u` to preserve
+# file ownership. Pi cannot escalate to root; admin user's own sudo rules
+# require a passphrase pi doesn't have.
+#
+# You can override these values in group_vars, e.g:
+# pi_sudo_commands: ALL
+# pi_sudo_runas: root
+# pi_sudo_nopasswd: true
+# pi_root_authorized: false
+
 - name: Configure Pi automation access
   hosts: all
   become: true
@@ -7,6 +20,7 @@
       vars:
         ssh_user_name: pi
         ssh_user_pubkey_path: "{{ lookup('env', 'HOME') }}/.ssh/pi_automation.pub"
-        ssh_user_sudo_commands: "{{ pi_sudo_commands | default('') }}"
+        ssh_user_sudo_commands: "{{ pi_sudo_commands | default('ALL') }}"
+        ssh_user_sudo_runas: "{{ pi_sudo_runas | default(lookup('env', 'USER')) }}"
         ssh_user_sudo_nopasswd: "{{ pi_sudo_nopasswd | default(false) }}"
         ssh_user_root_authorized: "{{ pi_root_authorized | default(false) }}"

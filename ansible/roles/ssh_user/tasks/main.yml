@@ -6,6 +6,16 @@
       - ssh_user_pubkey_path | length > 0
     fail_msg: "ssh_user_name and ssh_user_pubkey_path are required"
 
+- name: Assert sudo commands specified when sudo enabled
+  ansible.builtin.assert:
+    that:
+      - ssh_user_sudo_commands | length > 0
+    fail_msg: >-
+      ssh_user_sudo_nopasswd is true but ssh_user_sudo_commands is empty.
+      Refusing to grant unrestricted NOPASSWD:ALL by default.
+      Set ssh_user_sudo_commands explicitly (e.g. 'ALL' if you really mean it).
+  when: ssh_user_sudo_nopasswd | bool
+
 - name: Reject wildcard command specs
   ansible.builtin.assert:
     that:
@@ -59,11 +69,16 @@
 - name: Verify sudo command paths exist on target
   ansible.builtin.stat:
     path: "{{ item }}"
-  loop: "{{ ssh_user_sudo_commands.split(',') | map('trim') | reject('eq', 'ALL') | list }}"
+  loop: "{{ ssh_user_sudo_commands.split(',')
+            | map('trim')
+            | reject('eq', 'ALL')
+            | reject('eq', '')
+            | list }}"
   register: _sudo_cmd_stats
   when:
     - ssh_user_sudo_nopasswd | bool
     - ssh_user_sudo_commands != 'ALL'
+    - ssh_user_sudo_commands | length > 0
 
 - name: Assert all sudo command paths exist
   ansible.builtin.assert:
@@ -74,11 +89,12 @@
   when:
     - ssh_user_sudo_nopasswd | bool
     - ssh_user_sudo_commands != 'ALL'
+    - ssh_user_sudo_commands | length > 0
 
 - name: Grant passwordless sudo (opt-in)
   ansible.builtin.copy:
     dest: "/etc/sudoers.d/{{ ssh_user_name }}"
-    content: "{{ ssh_user_name }} ALL=(ALL) NOPASSWD:{{ ssh_user_sudo_commands }}\n"
+    content: "{{ ssh_user_name }} ALL=({{ ssh_user_sudo_runas }}) NOPASSWD:{{ ssh_user_sudo_commands }}\n"
     owner: root
     group: root
     mode: '0440'
