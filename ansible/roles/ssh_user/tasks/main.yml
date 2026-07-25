@@ -1,0 +1,92 @@
+---
+- name: Assert required vars
+  ansible.builtin.assert:
+    that:
+      - ssh_user_name | length > 0
+      - ssh_user_pubkey_path | length > 0
+    fail_msg: "ssh_user_name and ssh_user_pubkey_path are required"
+
+- name: Reject wildcard command specs
+  ansible.builtin.assert:
+    that:
+      - "'*' not in ssh_user_sudo_commands"
+    fail_msg: >-
+      Wildcards in sudoers command specs are dangerous (glob matches '/').
+      List exact commands or exact arg strings instead.
+  when:
+    - ssh_user_sudo_nopasswd | bool
+    - ssh_user_sudo_commands != 'ALL'
+
+- name: Ensure user exists
+  ansible.builtin.user:
+    name: "{{ ssh_user_name }}"
+    shell: "{{ ssh_user_shell }}"
+    create_home: "{{ ssh_user_create_home }}"
+    state: "{{ ssh_user_state }}"
+
+- name: Resolve user home
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ ssh_user_name }}"
+
+- name: Create .ssh directory
+# Example of getent_passwd (see also "Resolve user home" above):
+# getent_passwd = {
+#     "alice": ["alice", "x", "1001", "1001", "Alice Smith", "/home/alice", "/bin/bash"]
+# }
+  ansible.builtin.file:
+    path: "{{ ansible_facts.getent_passwd[ssh_user_name][4] }}/.ssh"
+    state: directory
+    owner: "{{ ssh_user_name }}"
+    group: "{{ ssh_user_name }}"
+    mode: '0700'
+
+- name: Authorize key for user
+  ansible.posix.authorized_key:
+    user: "{{ ssh_user_name }}"
+    key: "{{ lookup('file', ssh_user_pubkey_path) }}"
+    state: present
+    exclusive: false
+
+- name: Authorize key for root (opt-in)
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ lookup('file', ssh_user_pubkey_path) }}"
+    state: present
+    exclusive: false
+  when: ssh_user_root_authorized | bool
+
+- name: Verify sudo command paths exist on target
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ ssh_user_sudo_commands.split(',') | map('trim') | reject('eq', 'ALL') | list }}"
+  register: _sudo_cmd_stats
+  when:
+    - ssh_user_sudo_nopasswd | bool
+    - ssh_user_sudo_commands != 'ALL'
+
+- name: Assert all sudo command paths exist
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: "sudo command path does not exist: {{ item.item }}"
+  loop: "{{ _sudo_cmd_stats.results }}"
+  when:
+    - ssh_user_sudo_nopasswd | bool
+    - ssh_user_sudo_commands != 'ALL'
+
+- name: Grant passwordless sudo (opt-in)
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ ssh_user_name }}"
+    content: "{{ ssh_user_name }} ALL=(ALL) NOPASSWD:{{ ssh_user_sudo_commands }}\n"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: 'visudo -cf %s'
+  when: ssh_user_sudo_nopasswd | bool
+
+- name: Revoke passwordless sudo
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/{{ ssh_user_name }}"
+    state: absent
+  when: not (ssh_user_sudo_nopasswd | bool)

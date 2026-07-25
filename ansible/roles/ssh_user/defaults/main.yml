@@ -1,0 +1,9 @@
+---
+ssh_user_name: ""
+ssh_user_pubkey_path: ""
+ssh_user_shell: /bin/bash
+ssh_user_create_home: true
+ssh_user_sudo_nopasswd: false
+ssh_user_sudo_commands: ""
+ssh_user_root_authorized: false
+ssh_user_state: present

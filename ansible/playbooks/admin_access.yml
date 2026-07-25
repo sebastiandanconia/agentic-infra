@@ -1,27 +1,12 @@
 ---
-- name: Configure remote admin access
+- name: Configure admin access
   hosts: all
   become: true
-  gather_facts: true
-
-  vars:
-    ansible_user: ansible
-    admin_user: "{{ lookup('env', 'USER') }}"
-    admin_ssh_pubkey: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
-
-  tasks:
-    - name: Deploy admin SSH public key
-      ansible.posix.authorized_key:
-        user: "{{ admin_user }}"
-        key: "{{ admin_ssh_pubkey }}"
-        state: present
-        exclusive: false
-      when: admin_ssh_pubkey | length > 0
-
-    - name: Authorize admin key for root
-      ansible.posix.authorized_key:
-        user: root
-        key: "{{ admin_ssh_pubkey }}"
-        state: present
-        exclusive: false
-      when: admin_ssh_pubkey | length > 0
+  roles:
+    - role: ssh_user
+      vars:
+        ssh_user_name: "{{ lookup('env', 'USER') }}"
+        ssh_user_pubkey_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519.pub"
+        ssh_user_sudo_commands: ALL
+        ssh_user_sudo_nopasswd: false
+        ssh_user_root_authorized: true
