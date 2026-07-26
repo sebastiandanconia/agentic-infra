@@ -1,0 +1,146 @@
+# playbooks/nfs-root-provision/differentiate_host.yml
+#
+# Give a master-image clone its own identity.
+#
+# Mode follows ansible_connection:
+#   * chroot (pre-first-boot): write hostname/hosts, empty /etc/machine-id,
+#     and remove SSH host keys so first boot regenerates them. Run after
+#     cloning the master filesystem and before first boot.
+#   * ssh (running host): write hostname/hosts only. Does not touch
+#     machine-id or host keys — clearing those on a live host breaks SSH
+#     (firstboot units do not re-run just because the files vanished).
+#
+# become defaults to off for chroot (already root; sudo may be absent) and
+# on for ssh (automation user escalates via passwordless sudo). Override
+# with -e differentiate_become=true|false.
+#
+# The play's hosts pattern is {{ differentiate_target }}, defaulting to
+# netboot_hosts. --limit only filters within that pattern, so a host in
+# another group is skipped unless you pass
+# -e differentiate_target=<group_or_host>.
+#
+# Usage:
+#   # Clone mounted at /mnt/clone. Inventory example:
+#   #   [clone_hosts]
+#   #   web01-clone ansible_host=/mnt/clone ansible_connection=chroot
+#   sudo ansible-playbook -i hosts.ini playbooks/nfs-root-provision/differentiate_host.yml \
+#       -e differentiate_target=clone_hosts -e hostname=web01 -e target_domain=lan
+#
+#   # Running host already in [netboot_hosts]:
+#   ansible-playbook -i hosts.ini playbooks/nfs-root-provision/differentiate_host.yml \
+#       -l web01 -e hostname=web01
+
+---
+- name: Differentiate a cloned host
+  hosts: "{{ differentiate_target | default('netboot_hosts') }}"
+  # become: on for SSH (automation user must write /etc); off for chroot
+  # (already root; sudo may be missing). Override with
+  # -e differentiate_become=true|false.
+  become: "{{ differentiate_become | default((ansible_connection | default('ssh')) != 'chroot') }}"
+  gather_facts: false
+
+  vars:
+    # hostname is the per-clone override (pass via -e hostname=web01).
+    # target_domain comes from group_vars (or -e); do not default it here.
+    target_hostname: "{{ hostname | default('netboot-node') }}"
+
+  tasks:
+    - name: Show differentiation mode
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'chroot' if (ansible_connection | default('ssh')) == 'chroot' else 'SSH' }}
+          mode — become is
+          {{ 'OFF (already root inside the chroot)' if (ansible_connection | default('ssh')) == 'chroot' else 'ON (escalate via the automation user passwordless sudo)' }}.
+          {{ 'Override with -e differentiate_become=false to force off.' if (ansible_connection | default('ssh')) != 'chroot' else '' }}
+
+    - name: Validate hostname format
+      ansible.builtin.assert:
+        that:
+          # regex_search returns the match (or None), not a bool.
+          - target_hostname | regex_search('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$') is not none
+          - target_hostname | length <= 253
+        fail_msg: "Invalid hostname: {{ target_hostname }}"
+        success_msg: "Hostname valid: {{ target_hostname }}"
+
+    - name: Verify automation user has passwordless sudo (SSH mode)
+      ansible.builtin.command: sudo -n true
+      become: false
+      changed_when: false
+      failed_when: false
+      register: differentiate_sudo_check
+      when: (ansible_connection | default('ssh')) != 'chroot'
+
+    - name: Fail clearly if the automation user cannot escalate (SSH mode)
+      ansible.builtin.assert:
+        that:
+          - differentiate_sudo_check.rc | default(1) == 0
+        fail_msg: >-
+          SSH-mode differentiation needs the automation user to escalate to
+          root via passwordless sudo, but `sudo -n true` failed as
+          {{ ansible_user | default('ansible') }}. This playbook expects hosts
+          built by nfs_master, which grants the automation user passwordless
+          sudo via /etc/sudoers.d/<user>. Fix sudoers on the host, or force
+          become off with -e differentiate_become=false (root-owned writes
+          will then fail until the user can escalate).
+        success_msg: Automation user can escalate to root via passwordless sudo
+      when: (ansible_connection | default('ssh')) != 'chroot'
+
+    - name: Write /etc/hostname
+      ansible.builtin.copy:
+        content: "{{ target_hostname }}\n"
+        dest: /etc/hostname
+        owner: root
+        group: root
+        mode: '0644'
+        backup: true
+
+    - name: Write /etc/hosts
+      ansible.builtin.copy:
+        content: |
+          127.0.0.1   localhost
+          127.0.1.1   {{ target_hostname }}.{{ target_domain }}   {{ target_hostname.split('.')[0] }}
+
+          # The following lines are desirable for IPv6 capable hosts
+          ::1     localhost ip6-localhost ip6-loopback
+          ff02::1 ip6-allnodes
+          ff02::2 ip6-allrouters
+        dest: /etc/hosts
+        owner: root
+        group: root
+        mode: '0644'
+        backup: true
+
+    # Identity scrub is chroot-only: prepare a clone for first boot.
+    # SSH mode leaves machine-id and host keys alone.
+    - name: Empty /etc/machine-id (fresh ID on first boot) — chroot mode only
+      ansible.builtin.copy:
+        content: ""
+        dest: /etc/machine-id
+        owner: root
+        group: root
+        mode: '0444'
+        force: true
+      when: (ansible_connection | default('ssh')) == 'chroot'
+
+    - name: Remove stale /var/lib/dbus/machine-id — chroot mode only
+      ansible.builtin.file:
+        path: /var/lib/dbus/machine-id
+        state: absent
+      failed_when: false
+      when: (ansible_connection | default('ssh')) == 'chroot'
+
+    - name: Remove any SSH host keys (firstboot will regenerate) — chroot mode only
+      ansible.builtin.file:
+        path: "/etc/ssh/{{ item }}"
+        state: absent
+      loop:
+        - ssh_host_rsa_key
+        - ssh_host_rsa_key.pub
+        - ssh_host_ed25519_key
+        - ssh_host_ed25519_key.pub
+        - ssh_host_ecdsa_key
+        - ssh_host_ecdsa_key.pub
+        - ssh_host_dsa_key
+        - ssh_host_dsa_key.pub
+      failed_when: false
+      when: (ansible_connection | default('ssh')) == 'chroot'

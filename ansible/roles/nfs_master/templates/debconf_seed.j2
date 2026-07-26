@@ -1,0 +1,37 @@
+{# roles/nfs_master/templates/debconf_seed.j2 #}
+{# Loaded by debconf-set-selections before package install. #}
+{# tzdata is handled in configure_locale_timezone.yml (file + symlink) #}
+{# because its questions are area-dependent. #}
+
+# locales
+locales locales/locales_to_be_generated multiselect {{ locales_to_generate | join(', ') }}
+locales locales/default_environment_locale select {{ locale }}
+
+# keyboard-configuration
+keyboard-configuration keyboard-configuration/layoutcode string {{ keyboard_layout }}
+keyboard-configuration keyboard-configuration/variantcode string {{ keyboard_variant }}
+keyboard-configuration keyboard-configuration/modelcode string {{ keyboard_model }}
+keyboard-configuration keyboard-configuration/xkb-keymap select {{ keyboard_layout }}
+keyboard-configuration keyboard-configuration/unsupported_config_options boolean true
+keyboard-configuration keyboard-configuration/unsupported_config_layout boolean true
+keyboard-configuration keyboard-configuration/switch select No temporary switch
+keyboard-configuration keyboard-configuration/toggle select No toggling
+keyboard-configuration keyboard-configuration/altgr select The default for the keyboard layout
+keyboard-configuration keyboard-configuration/compose select No compose key
+
+# console-setup
+console-setup console-setup/charmap select {{ console_charmap }}
+console-setup console-setup/encoding select {{ console_charmap }}
+console-setup console-setup/fontface select {{ console_fontface }}
+console-setup console-setup/fontsize select {{ console_fontsize }}
+console-setup console-setup/codeset select {{ console_codeset }}
+console-setup console-setup/layoutcode string {{ keyboard_layout }}
+console-setup console-setup/variantcode string {{ keyboard_variant }}
+console-setup console-setup/modelcode string {{ keyboard_model }}
+console-setup console-setup/unsupported_config_options boolean true
+console-setup console-setup/unsupported_config_layout boolean true
+
+# nullmailer
+nullmailer shared/mailnames string {{ target_hostname }}
+nullmailer nullmailer/defaultdomain string {{ nullmailer_defaultdomain }}
+nullmailer nullmailer/relayhost string {{ nullmailer_relayhost }}

@@ -1,0 +1,12 @@
+---
+# roles/nfs_master/handlers/main.yml
+#
+# No handlers fire in the chroot build (no services are running). Handlers
+# are defined here for completeness and for any future live-host reuse of
+# the role; they are intentionally chroot-safe.
+
+- name: Restart sshd
+  ansible.builtin.service:
+    name: ssh
+    state: restarted
+  when: ansible_connection != 'chroot'

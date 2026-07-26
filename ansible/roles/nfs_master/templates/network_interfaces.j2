@@ -1,0 +1,7 @@
+{# roles/nfs_master/templates/network_interfaces.j2 #}
+# The NFS root is mounted by the initrd (BOOT=nfs) before init runs, so the
+# guest only brings up loopback here. The real interface is configured by
+# the kernel command line / DHCP from the initramfs.
+
+auto lo
+iface lo inet loopback

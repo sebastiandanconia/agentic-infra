@@ -1,0 +1,54 @@
+# Site values for the NFS master-image build.
+# Copy to group_vars/all.yml and edit. group_vars/all.yml is gitignored.
+#
+# Role defaults (full knob list): roles/nfs_master/defaults/main.yml
+# Anything set here overrides those defaults. Per-host overrides go in
+# host_vars/<host>.yml.
+
+# --- Identity --------------------------------------------------------------
+# Master-image placeholder hostname. Per-clone names come from
+# playbooks/nfs-root-provision/differentiate_host.yml.
+target_hostname: master
+target_domain: example.com
+timezone: America/Argentina/Buenos_Aires
+
+# --- Human (interactive) user ----------------------------------------------
+# SSH-key-only, locked password. The master build adds this user to the sudo
+# group (password required for sudo). Day-to-day management uses the
+# automation user below.
+master_user: sebastian
+master_user_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...REPLACE-ME replace-with-your-public-key"
+# true: also write /etc/sudoers.d/<user> with NOPASSWD.
+master_user_passwordless_sudo: false
+
+# --- Automation user (passwordless sudo, key-only) -------------------------
+# Ansible connects as this user after first boot.
+automation_user: ansible
+automation_user_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...REPLACE-ME replace-with-your-automation-key"
+
+# --- Network / NFS root ----------------------------------------------------
+nfs_server: nfs.example.com
+nfs_install_root: /srv/nfs/debian-bookworm
+nameserver: 192.0.2.1             # TEST-NET placeholder; set your real resolver
+search_domain: example.com
+
+# --- Publish kernel/initrd -------------------------------------------------
+# Default method is s3. Object names and initrd refresh default in the role.
+s3_endpoint_url: "http://s3.example.com:9000"
+s3_bucket: netboot
+s3_prefix: "debian/bookworm/amd64"
+# Credentials: /root/.aws/credentials on the driver, or AWS_* in the
+# environment. Do not commit credentials.
+
+# --- Optional overrides ----------------------------------------------------
+# Full defaults: roles/nfs_master/defaults/main.yml
+# kernel_deploy_method: tftp_scp
+# tftp_dest_host: tftp.example.com
+# tftp_dest_path: /srv/tftp/debian-bookworm
+# publish_refresh_initrd: true
+# debian_release: bookworm
+# debian_mirror: http://deb.debian.org/debian
+# nullmailer_relayhost: "smtp.example.com smtp"
+# install_priority_packages: true
+# master_excluded_packages: [systemd-resolved]
+# master_base_packages: []   # override only if the site master set differs

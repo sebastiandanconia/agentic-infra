@@ -1,0 +1,31 @@
+# playbooks/nfs-root-provision/10_chroot_build.yml
+#
+# Phase 2 (chroot): run the nfs_master role against /mnt/target via the
+# chroot connection, then apply the sudo policy by importing
+# playbooks/ubuntu_style_sudo.yml as a reusable component.
+#
+# Requires phase 1 (00_setup_debootstrap.yml) to have completed: the tree
+# must exist at /mnt/target and the bind-mounts must be up.
+#
+# Run as root:
+#   sudo ansible-playbook -i hosts.ini playbooks/nfs-root-provision/10_chroot_build.yml
+
+---
+- name: Build the master image inside the chroot
+  hosts: master_chroot
+  become: false               # chroot runs as root already
+  gather_facts: true
+
+  roles:
+    - role: nfs_master
+
+- name: Apply Ubuntu-style sudo policy (reusable component)
+  ansible.builtin.import_playbook: ../ubuntu_style_sudo.yml
+  vars:
+    # Target only the chroot host, not every host in inventory.
+    sudo_target_hosts: master_chroot
+    # chroot is already root; don't wrap tasks in sudo.
+    sudo_become: false
+    # Lock root, deploy sudoers, set PermitRootLogin prohibit-password.
+    sudo_users:
+      - "{{ master_user }}"

@@ -1,0 +1,117 @@
+---
+# roles/nfs_master/defaults/main.yml
+#
+# Fallback values for the NFS master-image build. Override these in
+# group_vars/all.yml (or host_vars) for your environment. The committed
+# example group_vars (group_vars/all.example.yml) mirrors these as a
+# documented template.
+
+# ─── Identity ─────────────────────────────────────────────────────────────
+target_hostname: master          # placeholder; differentiate_host.yml overrides per clone
+target_domain: example.com
+timezone: America/Argentina/Buenos_Aires
+locale: en_US.UTF-8
+locales_to_generate:
+  - "en_US.UTF-8 UTF-8"
+keyboard_layout: us
+keyboard_model: pc105
+keyboard_variant: ""
+console_charmap: UTF-8
+console_fontface: Fixed
+console_fontsize: "8x16"
+console_codeset: Lat15
+
+# ─── Human (interactive) user ─────────────────────────────────────────────
+master_user: sebastian
+master_user_shell: /bin/bash
+master_user_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...REPLACE-ME replace-with-your-public-key"
+master_user_passwordless_sudo: false
+
+# ─── Automation user (passwordless sudo, key-only) ────────────────────────
+automation_user: ansible
+automation_user_shell: /bin/bash
+automation_user_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...REPLACE-ME replace-with-your-automation-key"
+
+# ─── Network / NFS root ───────────────────────────────────────────────────
+nfs_server: nfs.example.com
+nfs_install_root: /srv/nfs/debian-bookworm
+nfs_mount_options: defaults,noatime
+nameserver: 192.0.2.1
+search_domain: example.com
+
+# ─── APT ──────────────────────────────────────────────────────────────────
+debian_mirror: http://deb.debian.org/debian
+debian_release: bookworm
+debian_security_release: bookworm-security
+debian_security_mirror: http://deb.debian.org/debian-security
+master_base_packages:
+  - linux-image-amd64
+  - nfs-common
+  - initramfs-tools
+  - curl
+  - ca-certificates
+  - rsync
+  - locales
+  - tzdata
+  - console-setup
+  - keyboard-configuration
+  - resolvconf
+  - systemd-timesyncd
+  - openssh-server
+  - cron
+  - ed
+  - file
+  - bash-completion
+  - dnsutils
+  - gnupg
+  - htop
+  - iotop
+  - less
+  - lsof
+  - man-db
+  - manpages
+  - mc
+  - mtr-tiny
+  - python3
+  - reportbug
+  - sudo
+  - tcpdump
+  - time
+  - traceroute
+  - usbutils
+  - wget
+  - whois
+  - nullmailer
+  - logrotate
+  - dctrl-tools
+# Install every package at Debian "important" or "standard" priority.
+install_priority_packages: true
+# Keep these out of the master image even if the priority pass would pull them.
+master_excluded_packages:
+  - systemd-resolved
+
+# ─── Mail (nullmailer) ────────────────────────────────────────────────────
+nullmailer_relayhost: ""
+nullmailer_defaultdomain: "{{ target_domain }}"
+
+# ─── SSH policy ───────────────────────────────────────────────────────────
+# ubuntu_style_sudo.yml owns PermitRootLogin and the sudoers policy; these
+# handle the remaining sshd_config lines.
+sshd_password_authentication: "no"
+sshd_pubkey_authentication: "yes"
+
+# ─── Initramfs (NFS root) ─────────────────────────────────────────────────
+initramfs_modules: netboot
+initramfs_boot: nfs
+initramfs_compress: zstd
+
+# ─── Publish kernel/initrd ────────────────────────────────────────────────
+kernel_deploy_method: s3
+publish_refresh_initrd: true
+s3_endpoint_url: "http://s3.example.com:9000"
+s3_bucket: netboot
+s3_prefix: "debian/bookworm"
+s3_kernel_object: vmlinuz
+s3_initrd_object: initrd
+tftp_dest_host: ""
+tftp_dest_path: "/srv/tftp/debian-bookworm"

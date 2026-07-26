@@ -1,0 +1,51 @@
+---
+# roles/nfs_master/tasks/configure_services.yml
+#
+# systemd is not running in the chroot, so `service`/`systemd` modules here
+# only manipulate symlinks under /etc/systemd/system (enable), which is what
+# we want. Units start for real on first boot of the cloned host.
+
+- name: Install NFS shutdown-fix service (remount root read-only on shutdown)
+  ansible.builtin.template:
+    src: nfs-shutdown-fix.service.j2
+    dest: /etc/systemd/system/nfs-shutdown-fix.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: nfs_shutdown_service
+
+- name: Enable nfs-shutdown-fix service
+  ansible.builtin.systemd:
+    name: nfs-shutdown-fix.service
+    enabled: true
+  when: nfs_shutdown_service.changed
+
+- name: Ensure persistent journal directory exists
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: '2755'
+
+- name: Create persistent journal tmpfiles entry
+  ansible.builtin.command: systemd-tmpfiles --create --prefix /var/log/journal
+  changed_when: false
+  failed_when: false
+
+- name: Enable cron
+  ansible.builtin.systemd:
+    name: cron
+    enabled: true
+
+- name: Enable systemd-resolved
+  ansible.builtin.systemd:
+    name: systemd-resolved
+    enabled: true
+  failed_when: false
+
+- name: Enable systemd-timesyncd
+  ansible.builtin.systemd:
+    name: systemd-timesyncd
+    enabled: true
+  failed_when: false

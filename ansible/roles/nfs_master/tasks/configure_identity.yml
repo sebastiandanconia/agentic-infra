@@ -1,0 +1,62 @@
+---
+# roles/nfs_master/tasks/configure_identity.yml
+#
+# Hostname/hosts use a placeholder (target_hostname) at build time; real
+# per-host names are set by playbooks/differentiate_host.yml on each clone.
+#
+# /etc/machine-id is left empty so systemd generates a fresh, unique machine
+# ID on each first boot (after a ZFS clone). This is the same principle as
+# the SSH host keys: differentiation must happen before identity is minted.
+
+- name: Validate hostname format
+  ansible.builtin.assert:
+    that:
+      # regex_search returns the matched string (or None), not a bool. Newer
+      # Ansible rejects non-boolean conditionals ("Conditionals must have a
+      # boolean result"); convert with `is not none`.
+      - target_hostname | regex_search('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$') is not none
+      - target_hostname | length <= 253
+    fail_msg: "Invalid hostname: {{ target_hostname }}"
+    success_msg: "Hostname valid: {{ target_hostname }}"
+
+- name: Write /etc/hostname
+  ansible.builtin.copy:
+    content: "{{ target_hostname }}\n"
+    dest: /etc/hostname
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+
+- name: Write /etc/hosts
+  ansible.builtin.template:
+    src: hosts.j2
+    dest: /etc/hosts
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+
+- name: Write /etc/environment
+  ansible.builtin.template:
+    src: environment.j2
+    dest: /etc/environment
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+
+- name: Empty /etc/machine-id so each clone mints a fresh ID on first boot
+  ansible.builtin.copy:
+    content: ""
+    dest: /etc/machine-id
+    owner: root
+    group: root
+    mode: '0444'
+    force: true
+
+- name: Remove a stale /var/lib/dbus/machine-id so dbus re-links on first boot
+  ansible.builtin.file:
+    path: /var/lib/dbus/machine-id
+    state: absent
+  failed_when: false

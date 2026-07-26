@@ -1,0 +1,116 @@
+# playbooks/nfs-root-provision/20_publish_kernel.yml
+#
+# Copy the kernel and initrd to their boot destination.
+# Default destination is an S3-compatible object store; set
+# kernel_deploy_method: tftp_scp for the TFTP/SCP path.
+#
+# Optional: refresh the initrd in the chroot first
+# (publish_refresh_initrd: true, the default) so the published initrd
+# matches the current /etc/initramfs-tools/initramfs.conf. The refresh runs
+# `chroot /mnt/target update-initramfs -u -k all` on the driver and needs
+# the bind-mounts up (run this before 90_teardown, or re-run
+# 00_setup_debootstrap to remount). Set publish_refresh_initrd: false to
+# publish whatever is already in /mnt/target/boot.
+#
+# iSCSI note: if you extend the build to an iSCSI root, install open-iscsi
+# in the master image and rebuild the initrd with the iscsi hooks before
+# publishing; the refresh task here will pick up that change automatically.
+#
+# S3 credentials: prefer /root/.aws/credentials on the driver (the aws CLI
+# reads it when running as root). To pass env vars through sudo, use
+# --preserve-env=AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN.
+# Do not use `sudo -E`: it keeps the login HOME and breaks Ansible async
+# job tracking (the wrapper writes $HOME/.ansible_async; the poller reads
+# ~root/.ansible_async). Do not commit credentials.
+#
+# Usage:
+#   sudo -H ansible-playbook -i hosts.ini playbooks/nfs-root-provision/20_publish_kernel.yml
+#   sudo -H ansible-playbook -i hosts.ini playbooks/nfs-root-provision/20_publish_kernel.yml \
+#       -e kernel_deploy_method=tftp_scp -e tftp_dest_host=tftp.lan
+
+---
+- name: Publish kernel and initrd to the boot destination
+  hosts: master_build_driver
+  become: true
+  gather_facts: true
+
+  vars:
+    target_mount: /mnt/target
+
+  tasks:
+    - name: Refresh initrd in the chroot (optional)
+      ansible.builtin.command: chroot {{ target_mount }} update-initramfs -u -k all
+      when: publish_refresh_initrd | default(true)
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Resolve the kernel and initrd paths (symlink, else newest version)
+      ansible.builtin.shell: |
+        set -e
+        # readlink -e (not -f): -e yields empty when the target is absent,
+        # so the versioned-file fallback below actually fires.
+        k=$(readlink -e {{ target_mount }}/boot/vmlinuz 2>/dev/null || true)
+        if [ -z "$k" ]; then
+          k=$(ls -1v {{ target_mount }}/boot/vmlinuz-* 2>/dev/null | tail -1)
+        fi
+        i=$(readlink -e {{ target_mount }}/boot/initrd.img 2>/dev/null || true)
+        if [ -z "$i" ]; then
+          i=$(ls -1v {{ target_mount }}/boot/initrd.img-* 2>/dev/null | tail -1)
+        fi
+        printf '%s\n%s\n' "$k" "$i"
+      args:
+        executable: /bin/bash
+      register: boot_artifacts
+      changed_when: false
+
+    - name: Set kernel/initrd path facts
+      ansible.builtin.set_fact:
+        kernel_path: "{{ boot_artifacts.stdout_lines[0] }}"
+        initrd_path: "{{ boot_artifacts.stdout_lines[1] }}"
+
+    - name: Show resolved artifacts
+      ansible.builtin.debug:
+        msg:
+          - "kernel: {{ kernel_path }}"
+          - "initrd: {{ initrd_path }}"
+          - "method: {{ kernel_deploy_method }}"
+
+    # ── S3 (default) ──────────────────────────────────────────────────────
+    # Credentials come from the standard aws chain (env, ~/.aws/credentials,
+    # or instance metadata). Only set AWS_* here if the caller defined the
+    # vars explicitly; otherwise leave the env untouched so `aws` reads
+    # /root/.aws/credentials. Do not use `default(omit)` inside an
+    # environment: block — it renders the literal `__omit_place_holder__…`
+    # string, which aws treats as a real key and rejects with
+    # InvalidAccessKeyId, shadowing the credentials file.
+    - name: Upload kernel to S3
+      ansible.builtin.command: >-
+        aws s3 cp --endpoint-url={{ s3_endpoint_url }}
+        {{ kernel_path }}
+        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ s3_kernel_object }}
+      environment: "{{ {'AWS_ACCESS_KEY_ID': aws_access_key_id, 'AWS_SECRET_ACCESS_KEY': aws_secret_access_key} if aws_access_key_id is defined and aws_secret_access_key is defined else {} }}"
+      when: kernel_deploy_method == 's3'
+
+    - name: Upload initrd to S3
+      ansible.builtin.command: >-
+        aws s3 cp --endpoint-url={{ s3_endpoint_url }}
+        {{ initrd_path }}
+        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ s3_initrd_object }}
+      environment: "{{ {'AWS_ACCESS_KEY_ID': aws_access_key_id, 'AWS_SECRET_ACCESS_KEY': aws_secret_access_key} if aws_access_key_id is defined and aws_secret_access_key is defined else {} }}"
+      when: kernel_deploy_method == 's3'
+
+    # ── TFTP via SCP (alternative) ────────────────────────────────────────
+    # Alternative: swap scp for rsync (-e ssh), or use ansible.posix.synchronize
+    # if that collection is available. Destination host must accept your SSH
+    # key and allow writes under tftp_dest_path.
+    - name: Copy kernel to TFTP server over SCP
+      ansible.builtin.command: >-
+        scp {{ kernel_path }}
+        {{ tftp_dest_host }}:{{ tftp_dest_path }}/{{ s3_kernel_object }}
+      when: kernel_deploy_method == 'tftp_scp'
+
+    - name: Copy initrd to TFTP server over SCP
+      ansible.builtin.command: >-
+        scp {{ initrd_path }}
+        {{ tftp_dest_host }}:{{ tftp_dest_path }}/{{ s3_initrd_object }}
+      when: kernel_deploy_method == 'tftp_scp'

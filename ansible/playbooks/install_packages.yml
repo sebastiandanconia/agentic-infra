@@ -1,0 +1,43 @@
+# playbooks/install_packages.yml
+#
+# Generic, var-driven package installer. Reusable during the master build
+# (the nfs_master role has its own package task for the curated + priority
+# set) and post-boot against any host.
+#
+# The package list comes from vars:
+#   base_packages   - the baseline set
+#   extra_packages  - additional packages (e.g. per-host extras)
+# Override either in group_vars/host_vars or via --extra-vars.
+#
+# Usage:
+#   ansible-playbook -i hosts.ini playbooks/install_packages.yml \
+#       -e '{"base_packages":["rsync","htop"],"extra_packages":["btop"]}'
+#
+# To adjust the master image's package list, edit master_base_packages in
+# group_vars/all.yml (or roles/nfs_master/defaults/main.yml), not here.
+
+---
+- name: Install packages (modular, var-driven)
+  hosts: all
+  become: "{{ install_packages_become | default(true) }}"
+  gather_facts: true
+
+  vars:
+    install_packages_list: "{{ (base_packages | default([])) + (extra_packages | default([])) }}"
+
+  tasks:
+    - name: Fail with a helpful message if no packages were requested
+      ansible.builtin.assert:
+        that:
+          - install_packages_list | length > 0
+        fail_msg: >
+          No packages requested. Set base_packages and/or extra_packages
+          (group_vars, host_vars, or --extra-vars).
+
+    - name: Install requested packages
+      ansible.builtin.apt:
+        name: "{{ install_packages_list }}"
+        state: present
+        update_cache: "{{ install_packages_update_cache | default(true) }}"
+      environment:
+        DEBIAN_FRONTEND: noninteractive

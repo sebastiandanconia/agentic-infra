@@ -1,0 +1,75 @@
+---
+# roles/nfs_master/tasks/configure_ssh.yml
+#
+# Host-key uniqueness requires that NO host keys exist in the master image.
+# openssh-server's postinst generates keys on install, so we remove them
+# here. The ssh-keygen-firstboot service regenerates unique keys on first
+# boot (after differentiation), gated by ConditionPathExists on the
+# ed25519 key.
+#
+# PermitRootLogin is set by ubuntu_style_sudo.yml (imported after this role);
+# this file sets PasswordAuthentication / PubkeyAuthentication. No sshd
+# restart is needed — ssh isn't running in the chroot, and the config takes
+# effect when ssh starts on first boot.
+
+- name: Ensure sshd privilege separation directory exists (sshd -t needs it)
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Set PasswordAuthentication in sshd_config
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*PasswordAuthentication'
+    line: 'PasswordAuthentication {{ sshd_password_authentication }}'
+    owner: root
+    group: root
+    mode: '0644'
+    validate: 'sshd -t -f %s'
+    backup: true
+
+- name: Set PubkeyAuthentication in sshd_config
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*PubkeyAuthentication'
+    line: 'PubkeyAuthentication {{ sshd_pubkey_authentication }}'
+    owner: root
+    group: root
+    mode: '0644'
+    validate: 'sshd -t -f %s'
+
+- name: Remove any host keys baked in by openssh-server's postinst
+  ansible.builtin.file:
+    path: "/etc/ssh/{{ item }}"
+    state: absent
+  loop:
+    - ssh_host_rsa_key
+    - ssh_host_rsa_key.pub
+    - ssh_host_ed25519_key
+    - ssh_host_ed25519_key.pub
+    - ssh_host_ecdsa_key
+    - ssh_host_ecdsa_key.pub
+    - ssh_host_dsa_key
+    - ssh_host_dsa_key.pub
+
+- name: Install ssh-keygen-firstboot service
+  ansible.builtin.template:
+    src: ssh-keygen-firstboot.service.j2
+    dest: /etc/systemd/system/ssh-keygen-firstboot.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: firstboot_service
+
+- name: Enable ssh-keygen-firstboot service
+  ansible.builtin.systemd:
+    name: ssh-keygen-firstboot.service
+    enabled: true
+
+- name: Enable ssh service (starts after firstboot generates keys)
+  ansible.builtin.systemd:
+    name: ssh
+    enabled: true

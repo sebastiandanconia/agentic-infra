@@ -1,6 +1,6 @@
 # Reusable superuser policy component.
 #
-# Three knobs make it reusable across contexts:
+# Three variables make it reusable across contexts:
 #   sudo_target_hosts   - which hosts to target (default: all)
 #   sudo_become         - whether to escalate (default: true; set false for
 #                         the chroot connection, which is already root)
@@ -41,12 +41,22 @@
         name: root
         password: '!'   # locked, not '!!' (no password set at all)
 
+    - name: Generate throwaway host key for sshd -t validation
+      ansible.builtin.shell: ssh-keygen -q -N "" -t ed25519 -f /tmp/.sshd-valkey
+      args:
+        creates: /tmp/.sshd-valkey
+      changed_when: false
+
     - name: Set PermitRootLogin in sshd_config
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^#?\s*PermitRootLogin'
         line: 'PermitRootLogin {{ sshd_permit_root_login }}'
-        validate: 'sshd -t -f %s'
+        # Keyless master image: the role scrubs host keys, so sshd -t has none
+        # to validate against. Generate a throwaway key for the check (works
+        # in the chroot build and on live hosts). lineinfile's validate is
+        # shlex-split, so it must be a single command (no shell operators).
+        validate: 'sshd -t -f %s -o HostKey=/tmp/.sshd-valkey'
       notify: Restart sshd
 
     - name: Add specified users to sudo group
@@ -55,6 +65,15 @@
         groups: "{{ sudo_group }}"
         append: true
       loop: "{{ sudo_users | default([]) }}"
+
+    - name: Remove throwaway sshd validation host key
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/.sshd-valkey
+        - /tmp/.sshd-valkey.pub
+      changed_when: false
 
   handlers:
     - name: Restart sshd

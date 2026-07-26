@@ -1,0 +1,39 @@
+---
+# roles/nfs_master/tasks/configure_network.yml
+#
+# The NFS root is brought up by the initrd (BOOT=nfs), so the guest only
+# needs loopback in /etc/network/interfaces. DNS is provided by resolvconf's
+# base config; systemd-resolved feeds it at runtime.
+
+- name: Write /etc/network/interfaces (loopback only)
+  ansible.builtin.template:
+    src: network_interfaces.j2
+    dest: /etc/network/interfaces
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+
+- name: Ensure resolvconf base directory exists
+  ansible.builtin.file:
+    path: /etc/resolvconf/resolv.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Write resolvconf base (nameserver + search domain)
+  ansible.builtin.template:
+    src: resolvconf_base.j2
+    dest: /etc/resolvconf/resolv.conf.d/base
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+  register: resolvconf_base
+
+- name: Update resolvconf immediately
+  ansible.builtin.command: resolvconf -u
+  changed_when: false
+  failed_when: false
+  when: resolvconf_base.changed

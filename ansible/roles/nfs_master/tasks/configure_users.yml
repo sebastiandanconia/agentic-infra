@@ -1,0 +1,91 @@
+---
+# roles/nfs_master/tasks/configure_users.yml
+#
+# Creates two users; neither has a usable password (locked). Both are
+# SSH-key-only. Sudo policy is owned by playbooks/ubuntu_style_sudo.yml
+# (sudo group with password, root locked, PermitRootLogin), imported after
+# this role. The automation user additionally gets a passwordless
+# /etc/sudoers.d entry so Ansible can run unattended post-boot.
+#
+# The human user account requires a password for sudo by default
+# (master_user_passwordless_sudo: false).
+# (Management happens through the automation user.) Change this variable
+# to grant the human user passwordless sudo if desired.
+
+- name: Ensure sudo group exists (for the ubuntu_style_sudo policy)
+  ansible.builtin.group:
+    name: sudo
+    state: present
+
+- name: Create human user (locked password, key-only)
+  ansible.builtin.user:
+    name: "{{ master_user }}"
+    shell: "{{ master_user_shell }}"
+    home: "/home/{{ master_user }}"
+    create_home: true
+    groups: ""
+    password: '!'
+    append: false
+
+- name: Ensure human user's .ssh directory exists
+  ansible.builtin.file:
+    path: "/home/{{ master_user }}/.ssh"
+    state: directory
+    owner: "{{ master_user }}"
+    group: "{{ master_user }}"
+    mode: '0700'
+
+- name: Seed human user's authorized_keys
+  ansible.builtin.copy:
+    content: "{{ master_user_ssh_pubkey }}\n"
+    dest: "/home/{{ master_user }}/.ssh/authorized_keys"
+    owner: "{{ master_user }}"
+    group: "{{ master_user }}"
+    mode: '0600'
+  when: master_user_ssh_pubkey | length > 0
+
+- name: Grant human user passwordless sudo (optional)
+  ansible.builtin.copy:
+    content: "{{ master_user }} ALL=(ALL) NOPASSWD: ALL\n"
+    dest: "/etc/sudoers.d/{{ master_user }}"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: 'visudo -cf %s'
+  when: master_user_passwordless_sudo | bool
+
+- name: Create automation user (locked password, key-only)
+  ansible.builtin.user:
+    name: "{{ automation_user }}"
+    shell: "{{ automation_user_shell }}"
+    home: "/home/{{ automation_user }}"
+    create_home: true
+    groups: ""
+    password: '!'
+    append: false
+
+- name: Ensure automation user's .ssh directory exists
+  ansible.builtin.file:
+    path: "/home/{{ automation_user }}/.ssh"
+    state: directory
+    owner: "{{ automation_user }}"
+    group: "{{ automation_user }}"
+    mode: '0700'
+
+- name: Seed automation user's authorized_keys
+  ansible.builtin.copy:
+    content: "{{ automation_user_ssh_pubkey }}\n"
+    dest: "/home/{{ automation_user }}/.ssh/authorized_keys"
+    owner: "{{ automation_user }}"
+    group: "{{ automation_user }}"
+    mode: '0600'
+  when: automation_user_ssh_pubkey | length > 0
+
+- name: Grant automation user passwordless sudo
+  ansible.builtin.copy:
+    content: "{{ automation_user }} ALL=(ALL) NOPASSWD: ALL\n"
+    dest: "/etc/sudoers.d/{{ automation_user }}"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: 'visudo -cf %s'

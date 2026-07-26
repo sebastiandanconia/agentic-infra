@@ -1,0 +1,24 @@
+---
+# roles/nfs_master/tasks/preseed_debconf.yml
+#
+# Write a debconf seed file and load it before any package that expects
+# interactive configuration is installed. DEBIAN_FRONTEND=noninteractive is
+# also set as a safety net for any question we don't explicitly preseed.
+#
+# tzdata is NOT preseeded here: its debconf questions are area-dependent
+# (tzdata/Zones/<Area>), which makes a static seed brittle. Timezone is
+# applied in configure_locale_timezone.yml by writing /etc/timezone and
+# symlinking /etc/localtime, then dpkg-reconfigure tzdata.
+
+- name: Render debconf seed file
+  ansible.builtin.template:
+    src: debconf_seed.j2
+    dest: /tmp/master-debconf.seed
+    owner: root
+    group: root
+    mode: '0600'
+  register: debconf_seed_file
+
+- name: Load debconf selections
+  ansible.builtin.command: debconf-set-selections /tmp/master-debconf.seed
+  changed_when: debconf_seed_file.changed

@@ -1,0 +1,12 @@
+{# roles/nfs_master/templates/fstab.j2 #}
+# NFS root — mounted by the initrd, listed here for completeness
+{{ nfs_server }}:{{ nfs_install_root }}  /  nfs  {{ nfs_mount_options }}  0  0
+
+# Virtual filesystems
+proc       /proc  proc     defaults  0  0
+sysfs      /sys   sysfs    defaults  0  0
+devtmpfs   /dev   devtmpfs defaults  0  0
+
+# tmpfs
+tmpfs  /tmp  tmpfs  defaults  0  0
+tmpfs  /run  tmpfs  defaults  0  0

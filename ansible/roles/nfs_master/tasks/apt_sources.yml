@@ -1,0 +1,23 @@
+---
+# roles/nfs_master/tasks/apt_sources.yml
+#
+# debootstrap writes a minimal sources.list; replace it with the full set
+# (main, security, updates) so apt update sees everything the priority pass
+# and curated installs need.
+
+- name: Write /etc/apt/sources.list
+  ansible.builtin.template:
+    src: sources.list.j2
+    dest: /etc/apt/sources.list
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+  register: apt_sources
+
+- name: apt update
+  ansible.builtin.apt:
+    update_cache: true
+  when: apt_sources.changed
+  environment:
+    DEBIAN_FRONTEND: noninteractive

@@ -1,0 +1,52 @@
+---
+# roles/nfs_master/tasks/install_packages.yml
+#
+# Two-stage install:
+#   1. The curated master_base_packages list (kernel, NFS, SSH,
+#      dctrl-tools, etc.).
+#   2. Every package at Debian "important" or "standard" priority, via
+#        apt-cache dumpavail | grep-dctrl -FPriority -e 'important|standard'
+#      minus master_excluded_packages. This approximates what the Debian
+#      installer pulls in beyond debootstrap.
+#
+# DEBIAN_FRONTEND=noninteractive suppresses any prompt we didn't preseed.
+
+- name: Install curated base packages
+  ansible.builtin.apt:
+    name: "{{ master_base_packages }}"
+    state: present
+    update_cache: true
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Discover packages at important|standard priority
+  ansible.builtin.shell: |
+    set -o pipefail
+    apt-cache dumpavail | grep-dctrl -n -sPackage -FPriority -e 'important|standard'
+  args:
+    executable: /bin/bash
+  register: priority_packages_raw
+  changed_when: false
+  when: install_priority_packages
+
+- name: Filter excluded packages out of the priority set
+  ansible.builtin.set_fact:
+    priority_packages: >-
+      {{ priority_packages_raw.stdout_lines | difference(master_excluded_packages) }}
+  when: install_priority_packages
+
+- name: Show how many priority packages will be installed
+  ansible.builtin.debug:
+    msg: >-
+      Priority pass: {{ priority_packages | length | default(0) }} packages
+      (excluded {{ master_excluded_packages | length }}:
+      {{ master_excluded_packages | join(', ') }})
+  when: install_priority_packages
+
+- name: Install important|standard priority packages
+  ansible.builtin.apt:
+    name: "{{ priority_packages }}"
+    state: present
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  when: install_priority_packages

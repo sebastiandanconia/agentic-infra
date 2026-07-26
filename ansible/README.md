@@ -101,19 +101,35 @@ If you pass `-i inventory/` (a directory), Ansible does **not** walk up to a par
 
 ### This Repository
 
-At this stage the checked-in tree is intentionally small:
+Committed layout:
 
 ```text
 ansible/
-├── .gitignore            # Keeps local inventory and vars out of git
+├── ansible.cfg            # roles_path, interpreter_python, ssh control_path
+├── hosts.example.ini      # template — copy to hosts.ini
+├── group_vars/
+│   └── all.example.yml    # template — copy to all.yml
 ├── README.md
-└── playbooks/
-    ├── install_packages.yml
-    ├── install_dev_tools.yml
-    └── ...
+├── playbooks/
+│   ├── nfs-root-provision/   # NFS master-image pipeline
+│   │   ├── site_bootstrap.yml
+│   │   ├── 00_setup_debootstrap.yml
+│   │   ├── 10_chroot_build.yml
+│   │   ├── 20_publish_kernel.yml
+│   │   ├── 90_teardown.yml
+│   │   └── differentiate_host.yml
+│   ├── install_packages.yml
+│   ├── install_dev_tools.yml
+│   ├── ubuntu_style_sudo.yml
+│   └── …
+├── roles/
+│   ├── nfs_master/        # master-image build role
+│   └── ssh_user/
+└── templates/
+    └── sudoers.j2
 ```
 
-`hosts.ini`, `inventory/`, and `group_vars/` are gitignored. Hostnames, keys, and environment-specific defaults stay on the control machine; the public tree holds playbooks and documentation. Create your inventory next to (or as) `inventory` using one of the correct layouts above.
+`hosts.ini` and `group_vars/all.yml` are gitignored; the `*.example.*` templates are committed. Hostnames, keys, and environment-specific values stay on the control machine. Copy `hosts.example.ini` to `hosts.ini` (`ansible.cfg` defaults to that name) and edit it.
 
 ## Inventory and Variables
 
@@ -156,25 +172,30 @@ Notes:
 
 ## Playbooks in this tree
 
-These plays are starter material, not a finished platform. They illustrate the style this tree aims for: explicit names, module-first tasks, and vars at the top of the play.
+Style goals: explicit task names, modules over shell, vars at the top of the play.
 
 | Playbook | Purpose |
 | --- | --- |
-| `playbooks/install_packages.yml` | Baseline apt packages useful on any worker (`rsync`, DNS tools, `htop`/`btop`/`iftop`, `iperf3`). |
-| `playbooks/install_dev_tools.yml` | Per-user install of `nvm` (Node) and `rustup` (Rust) under `target_user`, with verification tasks at the end. |
+| `playbooks/install_packages.yml` | Reusable apt installer (`base_packages` / `extra_packages`). |
+| `playbooks/install_packages_example.yml` | Standalone example kept for reference. |
+| `playbooks/install_dev_tools.yml` | Per-user `nvm` and `rustup` under `target_user`. |
+| `playbooks/ubuntu_style_sudo.yml` | Sudo policy: sudo group with password, root locked, `PermitRootLogin prohibit-password`. Imported by the master build. |
+| `playbooks/nfs-root-provision/site_bootstrap.yml` | Full NFS master-image pipeline (debootstrap → chroot build → publish kernel/initrd → teardown). |
+| `playbooks/nfs-root-provision/00_setup_debootstrap.yml` … `90_teardown.yml` | Individual master-build phases. |
+| `playbooks/nfs-root-provision/differentiate_host.yml` | Per-clone hostname/identity (chroot before first boot, or hostname-only over SSH). |
 
-Run them against your inventory once it exists:
+NFS root bootstrap details: [`roles/nfs_master/README.md`](roles/nfs_master/README.md).
 
 ```bash
 # From this directory
-ansible-playbook -i inventory.ini playbooks/install_packages.yml
-ansible-playbook -i inventory.ini playbooks/install_dev_tools.yml
+ansible-playbook -i hosts.ini playbooks/install_packages.yml
+ansible-playbook -i hosts.ini playbooks/install_dev_tools.yml
 
 # Limit to one host or group
-ansible-playbook -i inventory.ini playbooks/install_dev_tools.yml -l lynch
+ansible-playbook -i hosts.ini playbooks/install_dev_tools.yml -l lynch
 
 # Preview changes without applying them
-ansible-playbook -i inventory.ini playbooks/install_packages.yml --check --diff
+ansible-playbook -i hosts.ini playbooks/install_packages.yml --check --diff
 ```
 
 ## Conventions worth keeping
@@ -195,7 +216,6 @@ As the ansible codebase grows, the following habits pay off:
 | [`../lxc`](../lxc) | Creates and shapes LXD networks, profiles, and instances. Ansible configures *inside* those instances after first boot. |
 | [`../firewall`](../firewall) | Host nftables + Docker coexistence. Applied on the LXD host, not usually via these guest-oriented plays. |
 | [`../agents`](../agents) | Policies and skills loaded by coding agents. Not deployed by Ansible today; candidates for a future `copy`/`template` play into guest home directories. |
-| [`../nfs-root`](../nfs-root) | Shared roots and boot material for diskless or shared-filesystem workers. Ansible can keep client mounts and packages aligned once the NFS side exists. |
 
 A practical lifecycle for a new agent worker:
 
@@ -218,6 +238,6 @@ Optional quality-of-life:
 ansible-playbook --syntax-check playbooks/install_packages.yml
 
 # Ad-hoc fact gathering against the inventory
-ansible -i inventory.ini workers -m ansible.builtin.setup
+ansible -i hosts.ini workers -m ansible.builtin.setup
 ```
 

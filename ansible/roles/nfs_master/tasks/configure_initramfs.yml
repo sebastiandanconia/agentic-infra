@@ -1,0 +1,28 @@
+---
+# roles/nfs_master/tasks/configure_initramfs.yml
+#
+# Configure initramfs-tools for NFS root and rebuild the initrd for every
+# installed kernel. The kernel package's postinst already built a first
+# initrd; this regenerates it with MODULES=netboot / BOOT=nfs so it can
+# mount the root over NFS.
+#
+# iSCSI extension point: for an iSCSI-root build instead of (or alongside)
+# NFS, install open-iscsi, set BOOT=iscsi (or combine via a custom hook),
+# and add the iscsi initiator config. That logic is intentionally not
+# shipped here — NFS root is the scope of this role.
+
+- name: Write /etc/initramfs-tools/initramfs.conf
+  ansible.builtin.template:
+    src: initramfs.conf.j2
+    dest: /etc/initramfs-tools/initramfs.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+  register: initramfs_conf
+
+- name: Rebuild initrd for all kernels (NFS-capable)
+  ansible.builtin.command: update-initramfs -u -k all
+  changed_when: initramfs_conf.changed
+  environment:
+    DEBIAN_FRONTEND: noninteractive

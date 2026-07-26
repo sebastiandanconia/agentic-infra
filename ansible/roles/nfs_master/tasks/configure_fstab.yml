@@ -1,0 +1,15 @@
+---
+# roles/nfs_master/tasks/configure_fstab.yml
+#
+# The NFS root is mounted by the initrd before init runs; the entry here is
+# for completeness and to make `mount` output sensible. Virtual and tmpfs
+# entries mirror Bootstrap_Debian.sh.
+
+- name: Write /etc/fstab
+  ansible.builtin.template:
+    src: fstab.j2
+    dest: /etc/fstab
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true

@@ -1,0 +1,52 @@
+---
+# roles/nfs_master/tasks/configure_locale_timezone.yml
+#
+# Apply the locale, timezone, keyboard, and console configuration that the
+# debconf seed started. dpkg-reconfigure regenerates config files from the
+# seeded debconf database; setupcon applies the console font/keymap.
+
+- name: Reconfigure locales from preseeded selections
+  ansible.builtin.command: dpkg-reconfigure -f noninteractive locales
+  changed_when: false
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Write /etc/timezone
+  ansible.builtin.copy:
+    content: "{{ timezone }}\n"
+    dest: /etc/timezone
+    owner: root
+    group: root
+    mode: '0644'
+  register: etc_timezone
+
+- name: Symlink /etc/localtime to the zoneinfo file
+  ansible.builtin.file:
+    src: "/usr/share/zoneinfo/{{ timezone }}"
+    dest: /etc/localtime
+    state: link
+    force: true
+  register: etc_localtime
+
+- name: Reconfigure tzdata to pick up the new timezone
+  ansible.builtin.command: dpkg-reconfigure -f noninteractive tzdata
+  changed_when: etc_timezone.changed or etc_localtime.changed
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Reconfigure keyboard-configuration from preseeded selections
+  ansible.builtin.command: dpkg-reconfigure -f noninteractive keyboard-configuration
+  changed_when: false
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Reconfigure console-setup from preseeded selections
+  ansible.builtin.command: dpkg-reconfigure -f noninteractive console-setup
+  changed_when: false
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Apply console font and keymap to the console
+  ansible.builtin.command: setupcon -f
+  changed_when: false
+  failed_when: false

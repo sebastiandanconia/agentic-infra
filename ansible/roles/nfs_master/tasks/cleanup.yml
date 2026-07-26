@@ -1,0 +1,53 @@
+---
+# roles/nfs_master/tasks/cleanup.yml
+#
+# Trim the apt cache, refresh the man database, and scrub any fingerprint
+# that should be unique per host (host keys, machine-id) one more time
+# before the image is used as a clone master.
+
+- name: apt clean
+  ansible.builtin.command: apt-get clean
+  changed_when: false
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: apt autoremove (unused dependencies)
+  ansible.builtin.apt:
+    autoremove: true
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Refresh man database
+  ansible.builtin.command: mandb --quiet
+  changed_when: false
+  failed_when: false
+
+- name: Final scrub of any regenerated SSH host keys
+  ansible.builtin.file:
+    path: "/etc/ssh/{{ item }}"
+    state: absent
+  loop:
+    - ssh_host_rsa_key
+    - ssh_host_rsa_key.pub
+    - ssh_host_ed25519_key
+    - ssh_host_ed25519_key.pub
+    - ssh_host_ecdsa_key
+    - ssh_host_ecdsa_key.pub
+    - ssh_host_dsa_key
+    - ssh_host_dsa_key.pub
+  failed_when: false
+
+- name: Final scrub of /etc/machine-id
+  ansible.builtin.copy:
+    content: ""
+    dest: /etc/machine-id
+    owner: root
+    group: root
+    mode: '0444'
+    force: true
+
+# The debconf seed (/tmp/master-debconf.seed) is intentionally NOT scrubbed
+# here. Removing it would force the preseed tasks to recreate it on every
+# re-run (3 spurious `changed` per run), breaking idempotency. The seed is
+# non-secret, non-host-specific, and lives in /tmp which is tmpfs at boot
+# (so it is not visible at runtime). Leave it in place for idempotent re-runs.

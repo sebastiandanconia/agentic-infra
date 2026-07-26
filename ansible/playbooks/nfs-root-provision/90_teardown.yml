@@ -1,0 +1,53 @@
+# playbooks/nfs-root-provision/90_teardown.yml
+#
+# Phase 4 (local driver): unbind the virtual filesystems and unmount the
+# NFS share. Innermost mounts come off first. Safe to re-run: already-unmounted
+# targets are ignored.
+#
+# Run as root:
+#   sudo ansible-playbook -i hosts.ini playbooks/nfs-root-provision/90_teardown.yml
+
+---
+- name: Teardown — unbind and unmount the target
+  hosts: master_build_driver
+  become: true
+  gather_facts: false
+
+  vars:
+    target_mount: /mnt/target
+
+  tasks:
+    - name: Unmount /mnt/target/dev/pts (best-effort)
+      ansible.builtin.shell: |
+        mountpoint -q {{ target_mount }}/dev/pts && umount {{ target_mount }}/dev/pts || true
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Unmount /mnt/target/dev (best-effort)
+      ansible.builtin.shell: |
+        mountpoint -q {{ target_mount }}/dev && umount {{ target_mount }}/dev || true
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Unmount /mnt/target/sys (best-effort)
+      ansible.builtin.shell: |
+        mountpoint -q {{ target_mount }}/sys && umount {{ target_mount }}/sys || true
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Unmount /mnt/target/proc (best-effort)
+      ansible.builtin.shell: |
+        mountpoint -q {{ target_mount }}/proc && umount {{ target_mount }}/proc || true
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Unmount the NFS share at /mnt/target (best-effort)
+      ansible.builtin.shell: |
+        mountpoint -q {{ target_mount }} && umount {{ target_mount }} || true
+      args:
+        executable: /bin/bash
+      changed_when: false

@@ -1,0 +1,54 @@
+---
+# roles/nfs_master/tasks/main.yml
+#
+# Orchestrates the master-image build inside the chroot. Run via the chroot
+# connection against /mnt/target (see playbooks/10_chroot_build.yml).
+#
+# Ordering matters:
+#   1. Preseed debconf so subsequent apt installs are non-interactive.
+#   2. APT sources + curated packages, then the important|standard pass.
+#   3. Apply locale/timezone/console configuration the preseed started.
+#   4. Network, fstab, initramfs (and rebuild the initrd for NFS boot).
+#   5. Identity (hostname/hosts/environment/machine-id).
+#   6. Users (human + automation), SSH (no host keys, first-boot keygen),
+#      services (NFS shutdown fix, cron, resolved, timesyncd), cleanup.
+#
+# Sudo policy (sudoers, root lock, PermitRootLogin) is applied by
+# playbooks/ubuntu_style_sudo.yml, imported from 10_chroot_build.yml after
+# this role completes.
+
+- name: Preseed debconf for non-interactive package configuration
+  ansible.builtin.import_tasks: preseed_debconf.yml
+
+- name: Write APT sources
+  ansible.builtin.import_tasks: apt_sources.yml
+
+- name: Install packages (curated set + important|standard priority pass)
+  ansible.builtin.import_tasks: install_packages.yml
+
+- name: Apply locale, timezone, and console configuration
+  ansible.builtin.import_tasks: configure_locale_timezone.yml
+
+- name: Configure network and DNS
+  ansible.builtin.import_tasks: configure_network.yml
+
+- name: Write fstab (NFS root)
+  ansible.builtin.import_tasks: configure_fstab.yml
+
+- name: Configure initramfs and rebuild for NFS boot
+  ansible.builtin.import_tasks: configure_initramfs.yml
+
+- name: Set system identity (hostname, hosts, environment, machine-id)
+  ansible.builtin.import_tasks: configure_identity.yml
+
+- name: Create users and seed SSH authorized_keys
+  ansible.builtin.import_tasks: configure_users.yml
+
+- name: Configure SSH (remove host keys, install first-boot keygen service)
+  ansible.builtin.import_tasks: configure_ssh.yml
+
+- name: Install and enable system services (NFS shutdown fix, cron, NTP, ...)
+  ansible.builtin.import_tasks: configure_services.yml
+
+- name: Clean up apt cache, man db, and master-image fingerprints
+  ansible.builtin.import_tasks: cleanup.yml

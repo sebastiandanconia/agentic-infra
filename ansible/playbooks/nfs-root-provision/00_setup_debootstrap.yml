@@ -1,0 +1,97 @@
+# playbooks/nfs-root-provision/00_setup_debootstrap.yml
+#
+# Phase 1 (local driver): mount the NFS share at /mnt/target, run debootstrap,
+# and bind-mount the virtual filesystems so the chroot connection can run
+# Ansible tasks inside the tree.
+#
+# Idempotent enough to re-run: it skips debootstrap if /mnt/target already
+# looks populated, and skips mounts that are already in place.
+#
+# Run as root (the controller needs CAP_SYS_ADMIN for mount and chroot):
+#   sudo ansible-playbook -i hosts.ini playbooks/nfs-root-provision/00_setup_debootstrap.yml
+
+---
+- name: Setup — mount NFS, debootstrap, bind-mount virtual filesystems
+  hosts: master_build_driver
+  become: true
+  gather_facts: true
+
+  vars:
+    target_mount: /mnt/target
+    # Include python3 (chroot connection facts) and python3-apt (the apt
+    # module requires it; without it the role's first apt task only works
+    # via the module's normal-mode auto-install self-heal, and --check --diff
+    # against a fresh chroot hard-fails with "python3-apt must be installed
+    # to use check mode").
+    debootstrap_includes: python3,python3-apt
+
+  tasks:
+    - name: Ensure debootstrap is installed on the driver
+      ansible.builtin.apt:
+        name: debootstrap
+        state: present
+        update_cache: true
+
+    - name: Ensure mount point exists
+      ansible.builtin.file:
+        path: "{{ target_mount }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Check whether the NFS share is already mounted at the target
+      ansible.builtin.command: mountpoint -q {{ target_mount }}
+      register: target_mountpoint
+      changed_when: false
+      failed_when: false
+
+    - name: Mount the NFS share at the target
+      ansible.builtin.command: >-
+        mount -t nfs {{ nfs_server }}:{{ nfs_install_root }} {{ target_mount }}
+      when: target_mountpoint.rc != 0
+
+    - name: Check whether /mnt/target looks already debootstrapped
+      ansible.builtin.stat:
+        path: "{{ target_mount }}/bin/sh"
+      register: target_populated
+
+    - name: Run debootstrap into the target
+      ansible.builtin.command: >-
+        debootstrap
+        --arch=amd64
+        --include={{ debootstrap_includes }}
+        {{ debian_release }} {{ target_mount }} {{ debian_mirror }}
+      when: not target_populated.stat.exists
+      async: 1800
+      poll: 30
+
+    # Bind-mounts. Each is skipped if already a mountpoint, so re-runs are safe.
+    - name: Bind-mount /proc into the target (guarded)
+      ansible.builtin.shell: |
+        mountpoint -q {{ target_mount }}/proc || mount --bind /proc {{ target_mount }}/proc
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Bind-mount /sys into the target (guarded)
+      ansible.builtin.shell: |
+        mountpoint -q {{ target_mount }}/sys || mount --bind /sys {{ target_mount }}/sys
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Bind-mount /dev into the target (guarded)
+      ansible.builtin.shell: |
+        mountpoint -q {{ target_mount }}/dev || mount --bind /dev {{ target_mount }}/dev
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Ensure /dev/pts exists in the target, then bind-mount it (guarded)
+      ansible.builtin.shell: |
+        mkdir -p {{ target_mount }}/dev/pts
+        mountpoint -q {{ target_mount }}/dev/pts || mount --bind /dev/pts {{ target_mount }}/dev/pts
+      args:
+        executable: /bin/bash
+      changed_when: false

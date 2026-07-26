@@ -1,0 +1,26 @@
+# playbooks/nfs-root-provision/site_bootstrap.yml
+#
+# Full pipeline: debootstrap → chroot build → publish kernel/initrd → teardown.
+# Each phase is a separate playbook imported here, so you can also run any
+# phase on its own (see playbooks/nfs-root-provision/00_..90_*.yml).
+#
+# Run as root:
+#   sudo -H ansible-playbook -i hosts.ini playbooks/nfs-root-provision/site_bootstrap.yml
+#
+# To stop after the chroot build (e.g. to inspect the image before publishing
+# or tearing down), run the phases individually:
+#   sudo ansible-playbook -i hosts.ini playbooks/nfs-root-provision/00_setup_debootstrap.yml
+#   sudo ansible-playbook -i hosts.ini playbooks/nfs-root-provision/10_chroot_build.yml
+#   # ... inspect /mnt/target ...
+#   sudo -H ansible-playbook -i hosts.ini playbooks/nfs-root-provision/20_publish_kernel.yml
+#   sudo ansible-playbook -i hosts.ini playbooks/nfs-root-provision/90_teardown.yml
+#
+# 20_publish_kernel.yml expects AWS-style credentials in its environment when
+# uploading to S3-compatible object storage, so you should use `sudo -H``;
+# if you use `sudo -E`` you'll confuse Ansible's async_wrapper.py component.
+
+---
+- ansible.builtin.import_playbook: 00_setup_debootstrap.yml
+- ansible.builtin.import_playbook: 10_chroot_build.yml
+- ansible.builtin.import_playbook: 20_publish_kernel.yml
+- ansible.builtin.import_playbook: 90_teardown.yml
