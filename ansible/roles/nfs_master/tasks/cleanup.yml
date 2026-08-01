@@ -51,3 +51,8 @@
 # re-run (3 spurious `changed` per run), breaking idempotency. The seed is
 # non-secret, non-host-specific, and lives in /tmp which is tmpfs at boot
 # (so it is not visible at runtime). Leave it in place for idempotent re-runs.
+
+- name: Remove cross-build second-stage marker (build-time only)
+  ansible.builtin.file:
+    path: /.second-stage-done
+    state: absent

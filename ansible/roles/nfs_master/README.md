@@ -50,10 +50,22 @@ ansible/
 - `aws` CLI for the S3 publish path, with credentials from the normal chain (env, `/root/.aws/credentials` when root, or instance metadata).
 - NFS share reachable from the driver (phase 0 mounts it). The driver must be allowed by the export's client ACL (`showmount -e <nfs_server>`).
 - Run the controller as root (`sudo` / `sudo -H`) for mounts and chroot(2).
+- **For cross-builds only** (target arch ≠ driver arch, e.g. building arm64
+  on an amd64 driver): `qemu-user-static` (installed automatically by phase
+  0 if missing) and a working `binfmt_misc` registration. On a normal
+  Ubuntu/Debian host, installing `qemu-user-static` registers the binfmt
+  handlers with the fix-binary flag, so emulated binaries run inside any
+  chroot/mount namespace. A container without `binfmt_misc` mounted cannot
+  run a cross-build's `--second-stage`; run cross-builds on a real host.
 
 **Chroot target**
 
 - `python3` and `python3-apt` (phase 0 passes `--include=python3,python3-apt` so facts and the `apt` module work, including `--check`).
+- `python3` + `python3-apt` (phase 0 passes `--include=python3,python3-apt`
+  to debootstrap so the chroot connection plugin can gather facts AND the
+  `apt` module works without its normal-mode auto-install self-heal — the
+  latter is required for the `--check --diff` dry-run to work against a
+  fresh chroot).
 
 ## Configure
 
@@ -70,7 +82,13 @@ Set the site values in `group_vars/all.yml` (see `all.example.yml`):
 - `master_user`, `master_user_ssh_pubkey`
 - `automation_user`, `automation_user_ssh_pubkey`
 - `nfs_server`, `nfs_install_root`, `nameserver`, `search_domain`
-- `s3_endpoint_url`, `s3_bucket`, `s3_prefix`
+- `s3_endpoint_url`, `s3_bucket`, `s3_prefix` — your object store. The
+  default `s3_prefix` includes the target arch (`debian/bookworm/<arch>`) so
+  builds for different arches don't clobber each other; override only if you
+  want a different layout.
+- `target_arch` (optional) — Debian arch of the image to build; default
+  `amd64`. Set `arm64` (or another Debian arch) for a cross-build. See
+  [Cross-build (other architectures)](#cross-build-other-architectures) below.
 
 Everything else has defaults in `roles/nfs_master/defaults/main.yml` (package lists, locale/keyboard, initramfs, sshd policy, TFTP path, and so on). Override those only when you mean to change image policy.
 
@@ -116,6 +134,70 @@ export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…
 sudo --preserve-env=AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN \
   -H ansible-playbook -i hosts.ini playbooks/nfs-root-provision/20_publish_kernel.yml
 ```
+
+## Cross-build (other architectures)
+
+The recipe is architecture-aware via a single `target_arch` variable
+(default `amd64`). Set it in `group_vars/all.yml` to build for another
+Debian arch — `arm64` is the motivating case:
+
+```yaml
+# group_vars/all.yml
+target_arch: arm64
+```
+
+Phase 0 (`00_setup_debootstrap.yml`) compares `target_arch` to the driver's
+own arch (derived from `ansible_facts.architecture`) and branches automatically:
+
+- **Native** (arches match, e.g. arm64 target on an arm64 driver): debootstrap
+  runs in a single stage, exactly as before. No qemu, no second-stage.
+- **Cross** (arches differ, e.g. arm64 target on an amd64 driver): debootstrap
+  runs with `--foreign` (stage 1 — unpack only), `qemu-user-static` is
+  installed on the driver and its `qemu-<arch>-static` binary is copied into
+  the target, the virtual filesystems are bind-mounted, and `debootstrap
+  --second-stage` runs inside the target **under qemu emulation** to
+  configure the unpacked packages. A marker file (`/.second-stage-done`)
+  guards second-stage for idempotent re-runs and is scrubbed by the role's
+  cleanup phase so it doesn't ship in the image.
+
+The `nfs_master` role itself is architecture-transparent — it runs via the
+  chroot connection, executing the target arch's binaries under qemu, and its
+  tasks (apt, dpkg-reconfigure, update-initramfs, user/ssh/systemd setup)
+  need no per-arch changes. The only arch-specific bits are: the kernel
+  meta-package (`linux-image-{{ target_arch }}` in `master_base_packages`)
+  and the publish paths (`s3_prefix` / `tftp_dest_path` default to arch-
+  suffixed values so arches don't clobber each other).
+
+### Cross-build caveats
+
+- **binfmt_misc is mandatory.** A container without `binfmt_misc` mounted
+  cannot run `--second-stage` (arm64 binaries under an amd64 kernel get
+  `exec format error`). Run cross-builds on a real host. `apt install
+  qemu-user-static` on a normal Ubuntu/Debian host registers the handlers.
+- **Emulation is slow.** The chroot build runs every target-arch binary
+  under qemu; `update-initramfs -u -k all` (the initrd rebuild) is the
+  slowest step. Budget several extra minutes vs a native build.
+- **Occasional postinst flakiness.** A small number of package postinst
+  scripts behave oddly under user-mode emulation. If a specific package's
+  configure step fails under qemu, run that one package's `dpkg
+  --configure` by hand in the chroot and re-run the role (it's idempotent).
+- **arm64 UEFI netboot needs a bootloader payload this recipe doesn't
+  ship.** `20_publish_kernel.yml` publishes `vmlinuz` + `initrd` only.
+  arm64 UEFI firmware TFTP-fetches a bootloader — typically `grubaa64.efi`
+  (from `grub-efi-arm64`, or shim) plus a `grub.cfg` that kernel-lines the
+  published vmlinuz/initrd with the NFS-root command line. Set that up out
+  of band, the same way amd64's pxelinux/grub payload is configured out of
+  band. (The published arm64 `vmlinuz-*` is an EFI stub, so a minimal UEFI
+  setup can chain it directly without grub.)
+
+### Building for multiple arches
+
+Because `s3_prefix` and `tftp_dest_path` default to arch-suffixed values,
+amd64 and arm64 builds publish to separate locations and coexist. Run the
+pipeline once per arch with `target_arch` set accordingly (e.g. two
+`group_vars` files selected via `-e @group_vars/arm64.yml`, or two separate
+control trees). The NFS install root (`nfs_install_root`) should also differ
+per arch so each arch has its own root filesystem.
 
 ## Publish kernel/initrd
 

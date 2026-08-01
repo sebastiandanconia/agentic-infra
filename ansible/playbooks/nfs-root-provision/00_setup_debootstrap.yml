@@ -4,8 +4,43 @@
 # and bind-mount the virtual filesystems so the chroot connection can run
 # Ansible tasks inside the tree.
 #
+# Architecture / cross-build:
+#   Set `target_arch` in group_vars (default amd64). When the target arch
+#   differs from the driver's arch, this is a CROSS-BUILD: debootstrap runs
+#   with --foreign (stage 1 only — unpack, no configuration), qemu-user-static
+#   is installed on the driver and its binary is copied into the target, the
+#   bind-mounts go up, and debootstrap --second-stage runs inside the target
+#   under qemu emulation to configure the unpacked packages. When the arches
+#   match, debootstrap runs normally in a single stage (the original behavior).
+#
+#   Cross-build prerequisites on the driver: qemu-user-static (installed
+#   automatically by this phase if missing) and a working binfmt_misc
+#   (registered by the qemu-user-static package on a normal host; its binfmt
+#   entries use the fix-binary flag so the qemu interpreter works inside any
+#   chroot/mount namespace). A container without binfmt_misc cannot run a
+#   cross-build's second-stage — run cross-builds on a real host.
+#
+#   Alternative (not shipped): mmdebstrap (Debian; in noble as 1.4.3-6)
+#   handles cross-arch bootstraps more robustly than debootstrap — it
+#   supports --mode=unshare (no root), writes cleaner dpkg state, and is
+#   generally more idempotent. It would replace this phase's debootstrap +
+#   foreign/second-stage dance. Kept on debootstrap here to preserve the
+#   existing flow; revisit if the second-stage slowness or taint friction
+#   recurs.
+#
 # Idempotent enough to re-run: it skips debootstrap if /mnt/target already
-# looks populated, and skips mounts that are already in place.
+# looks populated, skips second-stage via a marker file, and skips mounts
+# that are already in place.
+#
+# CRITICAL cleanup caveat: /mnt/target/dev, /proc, /sys are LIVE bind mounts
+# of the HOST's real /dev, /proc, /sys. Never run `rm -rf /mnt/target/*`
+# while they are attached — rm recurses through /mnt/target/dev and deletes
+# the contents of the host's real /dev (/dev/null, /dev/zero, /dev/urandom,
+# ...), and attempts the same on /proc and /sys. Always unmount the bind
+# mounts first (see the 90_teardown playbook, which unmounts innermost-first)
+# or unmount them manually, THEN wipe /mnt/target. On a tainted
+# second-stage the taint guard below auto-unmounts them; in every other
+# case you must unmount before wiping.
 #
 # Run as root (the controller needs CAP_SYS_ADMIN for mount and chroot):
 #   sudo ansible-playbook -i hosts.ini playbooks/nfs-root-provision/00_setup_debootstrap.yml
@@ -23,14 +58,72 @@
     # via the module's normal-mode auto-install self-heal, and --check --diff
     # against a fresh chroot hard-fails with "python3-apt must be installed
     # to use check mode").
-    debootstrap_includes: python3,python3-apt
+    # Also include eatmydata: under qemu-user TCG (no KVM) dpkg's per-package
+    # fsync storm dominates second-stage runtime, and the original 1800 s
+    # async budget was not enough for arm64 trixie. eatmydata LD_PRELOADs
+    # libeatmydata, which no-ops fsync/fdatasync/msync/sync_file_range (it
+    # does not no-op sync() itself, so the playbook's explicit sync and NFS
+    # flushes still happen). The wrapper only has to be unpacked by
+    # first-stage — not configured — so `chroot <target> eatmydata
+    # /debootstrap/debootstrap --second-stage` works even though eatmydata's
+    # own postinst has not run yet. Harmless on native builds (a tiny extra
+    # base package; the wrapper is only used by the cross second-stage task).
+    debootstrap_includes: python3,python3-apt,eatmydata
+    # Kernel uname → Debian architecture name. Used to compare the driver's
+    # arch (ansible_architecture, a uname string) against target_arch.
+    debian_arch_from_kernel:
+      x86_64: amd64
+      aarch64: arm64
+      armv7l: armhf
+      armv6l: armhf
+      ppc64le: ppc64el
+      riscv64: riscv64
+      s390x: s390x
+      i386: i386
+    # Debian architecture → qemu-user-static binary suffix.
+    qemu_arch_map:
+      amd64: x86_64
+      arm64: aarch64
+      armhf: arm
+      ppc64el: ppc64le
+      riscv64: riscv64
+      s390x: s390x
+      i386: i386
 
   tasks:
+    - name: Resolve host and target Debian architectures
+      ansible.builtin.set_fact:
+        host_arch: "{{ debian_arch_from_kernel[ansible_facts.architecture] | default(ansible_facts.architecture) }}"
+        target_arch_resolved: "{{ target_arch | default('amd64') }}"
+
+    - name: Determine build mode and cross-build paths
+      ansible.builtin.set_fact:
+        is_cross_build: "{{ target_arch_resolved != host_arch }}"
+        qemu_arch: "{{ qemu_arch_map[target_arch_resolved] | default(target_arch_resolved) }}"
+        qemu_static_bin: "/usr/bin/qemu-{{ qemu_arch_map[target_arch_resolved] | default(target_arch_resolved) }}-static"
+        # Empty for native builds; '--foreign' for cross. Renders harmlessly
+        # to a double space in the command string (shlex collapses it).
+        debootstrap_extra_flags: "{{ '--foreign' if (target_arch_resolved != host_arch) else '' }}"
+        second_stage_marker: "{{ target_mount }}/.second-stage-done"
+
+    - name: Show build mode
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'CROSS' if is_cross_build | bool else 'native' }} build —
+          host={{ host_arch }}, target={{ target_arch_resolved }}{{
+          ' qemu=' ~ qemu_static_bin if is_cross_build | bool else '' }}
+
     - name: Ensure debootstrap is installed on the driver
       ansible.builtin.apt:
         name: debootstrap
         state: present
         update_cache: true
+
+    - name: Ensure qemu-user-static is installed on the driver (cross-build)
+      ansible.builtin.apt:
+        name: qemu-user-static
+        state: present
+      when: is_cross_build | bool
 
     - name: Ensure mount point exists
       ansible.builtin.file:
@@ -56,17 +149,37 @@
         path: "{{ target_mount }}/bin/sh"
       register: target_populated
 
-    - name: Run debootstrap into the target
+    - name: Check whether debootstrap second-stage already ran (cross-build)
+      ansible.builtin.stat:
+        path: "{{ second_stage_marker }}"
+      register: second_stage_done
+      when: is_cross_build | bool
+
+    - name: Run debootstrap ({{ target_arch_resolved }} {{ debian_release }}) into the target
       ansible.builtin.command: >-
         debootstrap
-        --arch=amd64
+        --arch={{ target_arch_resolved }}
+        {{ debootstrap_extra_flags }}
         --include={{ debootstrap_includes }}
         {{ debian_release }} {{ target_mount }} {{ debian_mirror }}
       when: not target_populated.stat.exists
       async: 1800
       poll: 30
 
-    # Bind-mounts. Each is skipped if already a mountpoint, so re-runs are safe.
+    - name: Copy qemu-user-static binary into the target (cross-build)
+      ansible.builtin.copy:
+        src: "{{ qemu_static_bin }}"
+        dest: "{{ target_mount }}/usr/bin/"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0755'
+      when: is_cross_build | bool
+
+    # Bind-mounts. Each is skipped if already a mountpoint, so re-runs are
+    # safe. For cross-builds these must be up BEFORE --second-stage (and
+    # before the role's chroot connection runs the target arch's binaries
+    # under qemu), which is why second-stage runs after them, not before.
     - name: Bind-mount /proc into the target (guarded)
       ansible.builtin.shell: |
         mountpoint -q {{ target_mount }}/proc || mount --bind /proc {{ target_mount }}/proc
@@ -95,3 +208,102 @@
       args:
         executable: /bin/bash
       changed_when: false
+
+    # Taint guard for --second-stage. --second-stage is NOT resumable: it
+    # unconditionally re-runs x_feign_install dpkg, which APPENDS a feigned
+    # "Status: install ok installed" dpkg stanza to /var/lib/dpkg/status. A
+    # second pass over an interrupted tree leaves two dpkg stanzas (the feign
+    # lacks Description/Architecture), and the next x_core_install trips
+    # dpkg's parser with "multiple non-coinstallable package instances
+    # present". So before re-running, detect a half-configured tree and abort
+    # with a clear instruction to clean the target and start over.
+    - name: Detect a previously-interrupted second-stage (tainted tree)
+      ansible.builtin.shell: |
+        # A clean first-stage tree has an empty /var/lib/dpkg/status
+        # (first_stage_install truncates it to zero bytes). Once
+        # --second-stage starts, x_feign_install appends "Status: install ok
+        # installed" stanzas. So: status non-empty AND already holding an
+        # installed stanza == a second-stage that began but never reached the
+        # success marker below.
+        if [ -s {{ target_mount }}/var/lib/dpkg/status ] && \
+           grep -q '^Status: install ok installed' {{ target_mount }}/var/lib/dpkg/status 2>/dev/null; then
+          echo TAINTED
+        fi
+      args:
+        executable: /bin/bash
+      register: second_stage_tainted
+      changed_when: false
+      when:
+        - is_cross_build | bool
+        - not (second_stage_done.stat.exists | default(false))
+
+    - name: Abort if the target is tainted by an interrupted second-stage
+      ansible.builtin.fail:
+        msg: >-
+          A previous --second-stage was interrupted and left /mnt/target
+          half-configured. --second-stage is not resumable: re-running it
+          re-appends a feigned dpkg stanza and corrupts /var/lib/dpkg/status
+          (the "multiple non-coinstallable package instances present" dpkg
+          error). The bind mounts at /mnt/target/{dev/pts,dev,proc,sys} were
+          just unmounted by the auto-cleanup task above, so `sudo rm -rf
+          /mnt/target/*` is now SAFE — only the NFS share's content remains
+          underneath, and the host's real /dev, /proc, /sys are no longer
+          exposed through it. Wipe the target (sudo rm -rf /mnt/target/*) and
+          re-run this playbook from first stage; it will re-mount the binds
+          (guarded) and bootstrap fresh. Do not re-run --second-stage directly.
+      when: (second_stage_tainted.stdout | default('') | trim) == 'TAINTED'
+
+    # Cross-build second-stage: configure the unpacked packages inside the
+    # target under qemu-user emulation. Three things make this safe to re-run:
+    #
+    #   1. eatmydata wraps the chroot call WHEN present. Under qemu-user TCG
+    #      (no KVM) the dominant cost is dpkg's per-package fsync storm;
+    #      eatmydata's LD_PRELOAD no-ops fsync/fdatasync/msync/sync_file_range
+    #      and brings arm64 trixie second-stage from >30 min (which blew the
+    #      original 1800 s async budget) down to minutes-to-tens-of-minutes.
+    #      eatmydata is in debootstrap_includes, so a FRESH first-stage tree
+    #      has /usr/bin/eatmydata unpacked and takes the fast path. But the
+    #      first-stage idempotency guard above skips debootstrap once
+    #      /bin/sh exists, so a tree unpacked BEFORE eatmydata was added to
+    #      the includes lacks the wrapper — and `chroot <t> eatmydata ...`
+    #      then dies with rc=127 "eatmydata: No such file or directory"
+    #      before second-stage even starts. The wrapper is therefore used
+    #      opportunistically: if /usr/bin/eatmydata is in the target, wrap;
+    #      otherwise run plain `chroot <t> /debootstrap/debootstrap
+    #      --second-stage`. Plain second-stage is slow but correct, and the
+    #      6 h async budget below covers it. (If LD_PRELOAD can't resolve
+    #      libeatmydata.so inside the chroot the loader prints "ignored" and
+    #      the wrapped command still runs, so the wrapper's presence alone
+    #      never breaks second-stage.)
+    #
+    #   2. The taint gate above refuses to re-enter a half-configured tree
+    #      (see that task for the corruption mechanism). The success marker
+    #      is touched only as the last line below, so an interrupted run has
+    #      no marker and a non-empty status file — exactly the state the
+    #      guard aborts on.
+    #
+    #   3. async is deliberately generous (6 h). With eatmydata the real
+    #      runtime is far shorter; the timeout is no longer the failure mode
+    #      it was at 1800 s, and the taint gate is the real safety net for
+    #      re-runs. A true hang still surfaces (Ansible polls every 30 s and
+    #      you can Ctrl-C), but we never spuriously kill a healthy, slow
+    #      second-stage and re-trigger the corruption above.
+    - name: Run debootstrap second-stage in the target (cross-build)
+      ansible.builtin.shell: |
+        set -e
+        if [ -x {{ target_mount }}/usr/bin/eatmydata ]; then
+          chroot {{ target_mount }} eatmydata /debootstrap/debootstrap --second-stage
+        else
+          chroot {{ target_mount }} /debootstrap/debootstrap --second-stage
+        fi
+        touch {{ second_stage_marker }}
+      args:
+        executable: /bin/bash
+      when:
+        - is_cross_build | bool
+        - not (second_stage_done.stat.exists | default(false))
+        - (second_stage_tainted.stdout | default('') | trim) != 'TAINTED'
+      async: 21600
+      poll: 30
+      environment:
+        DEBIAN_FRONTEND: noninteractive

@@ -7,6 +7,12 @@
 # documented template.
 
 # ─── Identity ─────────────────────────────────────────────────────────────
+# Target Debian architecture. Default amd64 preserves the original behavior.
+# Set to arm64 (or another Debian arch) in group_vars to build for that arch.
+# When it differs from the driver's arch, playbooks/00_setup_debootstrap.yml
+# performs a cross-build via debootstrap --foreign + qemu-user-static; see
+# docs/nfs-master.md "Cross-build (other architectures)".
+target_arch: amd64
 target_hostname: master          # placeholder; differentiate_host.yml overrides per clone
 target_domain: example.com
 timezone: America/Argentina/Buenos_Aires
@@ -45,7 +51,7 @@ debian_release: bookworm
 debian_security_release: bookworm-security
 debian_security_mirror: http://deb.debian.org/debian-security
 master_base_packages:
-  - linux-image-amd64
+  - linux-image-{{ target_arch }}    # linux-image-amd64 | linux-image-arm64 | ...
   - nfs-common
   - initramfs-tools
   - curl
@@ -110,8 +116,8 @@ kernel_deploy_method: s3
 publish_refresh_initrd: true
 s3_endpoint_url: "http://s3.example.com:9000"
 s3_bucket: netboot
-s3_prefix: "debian/bookworm"
+s3_prefix: "debian/{{ debian_release }}/{{ target_arch }}"   # keep arch in the path so arches don't clobber each other
 s3_kernel_object: vmlinuz
 s3_initrd_object: initrd
 tftp_dest_host: ""
-tftp_dest_path: "/srv/tftp/debian-bookworm"
+tftp_dest_path: "/srv/tftp/debian-{{ debian_release }}-{{ target_arch }}"   # arch-suffixed so arches don't clobber each other

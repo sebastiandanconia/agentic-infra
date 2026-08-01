@@ -5,6 +5,13 @@
 # Anything set here overrides those defaults. Per-host overrides go in
 # host_vars/<host>.yml.
 
+# --- Target architecture ---------------------------------------------------
+# Debian arch of the image to build. Default amd64 (original behavior).
+# Set arm64 (or another Debian arch) for a cross-build from an amd64 driver;
+# phase 0 then uses debootstrap --foreign + qemu-user-static automatically.
+# See docs/nfs-master.md "Cross-build (other architectures)".
+target_arch: amd64
+
 # --- Identity --------------------------------------------------------------
 # Master-image placeholder hostname. Per-clone names come from
 # playbooks/nfs-root-provision/differentiate_host.yml.
@@ -36,7 +43,7 @@ search_domain: example.com
 # Default method is s3. Object names and initrd refresh default in the role.
 s3_endpoint_url: "http://s3.example.com:9000"
 s3_bucket: netboot
-s3_prefix: "debian/bookworm/amd64"
+s3_prefix: "debian/bookworm/{{ target_arch }}"
 # Credentials: /root/.aws/credentials on the driver, or AWS_* in the
 # environment. Do not commit credentials.
 
@@ -44,7 +51,7 @@ s3_prefix: "debian/bookworm/amd64"
 # Full defaults: roles/nfs_master/defaults/main.yml
 # kernel_deploy_method: tftp_scp
 # tftp_dest_host: tftp.example.com
-# tftp_dest_path: /srv/tftp/debian-bookworm
+# tftp_dest_path: /srv/tftp/debian-bookworm-amd64
 # publish_refresh_initrd: true
 # debian_release: bookworm
 # debian_mirror: http://deb.debian.org/debian

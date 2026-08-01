@@ -16,6 +16,15 @@
 # in the master image and rebuild the initrd with the iscsi hooks before
 # publishing; the refresh task here will pick up that change automatically.
 #
+# arm64 / UEFI netboot note: this playbook publishes vmlinuz and initrd only,
+# same as for amd64. arm64 UEFI netboot additionally needs a bootloader the
+# firmware can TFTP-fetch — typically grubaa64.efi (from the grub-efi-arm64
+# package, or shim) plus a grub.cfg that kernel-lines the published
+# vmlinuz/initrd with the NFS-root command line. Generating that bootloader
+# payload is out of scope here; set it up out of band, the same way amd64's
+# pxelinux/grub payload is configured out of band. The published arm64
+# vmlinuz-* is an EFI stub, so a minimal UEFI setup can chain it directly.
+#
 # S3 credentials: prefer /root/.aws/credentials on the driver (the aws CLI
 # reads it when running as root). To pass env vars through sudo, use
 # --preserve-env=AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN.
