@@ -278,9 +278,27 @@
     #
     #   2. The taint gate above refuses to re-enter a half-configured tree
     #      (see that task for the corruption mechanism). The success marker
-    #      is touched only as the last line below, so an interrupted run has
-    #      no marker and a non-empty status file — exactly the state the
-    #      guard aborts on.
+    #      is touched only after the success line appears in the info log
+    #      below, so an interrupted run has no marker and a non-empty status
+    #      file — exactly the state the guard aborts on. (Why grep the info
+    #      log and not trust $?: debootstrap exits non-zero even on a fully
+    #      successful second-stage — ARCH_ALL_SUPPORTED is set only by
+    #      repo_supports_arch_all, which --second-stage never calls, so
+    #      functions:1751 `if [ $ARCH_ALL_SUPPORTED -eq 1 ]` evaluates as
+    #      `[ -eq 1 ]` and emits "[: -eq: unexpected operator"; that plus
+    #      debootstrap's own `set -e` and the post-success cleanup (mv
+    #      debootstrap.log -> var/log/bootstrap.log, sync, rm -rf
+    #      debootstrap) can leak a non-zero exit despite "I: Base system
+    #      installed successfully." already printed. The task trusts that
+    #      line over $?. The line is captured via a tee pipe: debootstrap's
+    #      info() writes `>&4`, and in the normal --second-stage path it
+    #      does `exec 4>&1` (fd4 = stdout) BEFORE `exec >>debootstrap.log`
+    #      (fd1 = log), so the I: lines ride fd4 = the ORIGINAL stdout =
+    #      the tee pipe. Redirecting fd 3 or fd 4 directly from outside
+    #      does NOT work — fd 3 is unused outside the installer-interaction
+    #      mode, and debootstrap's `exec 4>&1` reassigns fd4, clobbering any
+    #      pre-set redirect. Only piping stdout through tee captures fd4's
+    #      content, because `exec 4>&1` copies the pipe write end.))
     #
     #   3. async is deliberately generous (6 h). With eatmydata the real
     #      runtime is far shorter; the timeout is no longer the failure mode
@@ -290,13 +308,47 @@
     #      second-stage and re-trigger the corruption above.
     - name: Run debootstrap second-stage in the target (cross-build)
       ansible.builtin.shell: |
-        set -e
+        set +e
+        # Capture debootstrap's "I:"/"W:" stream (the success line lives
+        # there) by piping the chroot's stdout through tee. Why stdout and
+        # not fd 3/fd 4: debootstrap's info() writes >&4, and in the normal
+        # --second-stage path it runs `exec 4>&1` (fd4 = stdout) BEFORE
+        # redirecting fd1 to debootstrap.log — so the I: lines ride fd4 =
+        # the original stdout = this tee pipe. You CANNOT redirect fd 3
+        # (unused outside installer-interaction mode) or fd 4 (debootstrap's
+        # `exec 4>&1` clobbers any pre-set fd4) directly; only a stdout pipe
+        # catches fd4's content. tee writes the I: lines to both the info
+        # log (for grep below) and Ansible's stdout (preserving progress
+        # visibility in the transcript). PIPESTATUS[0] is the chroot's real
+        # exit code (the pipe itself would otherwise mask it as tee's 0).
+        info_log={{ target_mount }}/.second-stage.info
+        : > "$info_log"
         if [ -x {{ target_mount }}/usr/bin/eatmydata ]; then
-          chroot {{ target_mount }} eatmydata /debootstrap/debootstrap --second-stage
+          chroot {{ target_mount }} eatmydata /debootstrap/debootstrap --second-stage | tee -a "$info_log"
         else
-          chroot {{ target_mount }} /debootstrap/debootstrap --second-stage
+          chroot {{ target_mount }} /debootstrap/debootstrap --second-stage | tee -a "$info_log"
         fi
-        touch {{ second_stage_marker }}
+        rc=${PIPESTATUS[0]}
+        set -e
+        # Trust the success line over $rc: debootstrap can exit non-zero
+        # after a fully successful second-stage (the [: -eq: unexpected
+        # operator quirk from ARCH_ALL_SUPPORTED being unset in
+        # --second-stage, leaking via set -e during post-success cleanup).
+        # If "Base system installed successfully" appears in the info stream,
+        # the base system is configured and the marker is safe to touch —
+        # regardless of $rc.
+        if grep -q "Base system installed successfully" "$info_log" 2>/dev/null; then
+          touch {{ second_stage_marker }}
+          exit 0
+        fi
+        # No success marker — genuine failure. Surface both the info stream
+        # and the (first-stage) debootstrap.log tail for diagnostics before
+        # failing with the real exit code.
+        echo "---- second-stage FAILED (rc=$rc); info stream (tail): ----"
+        tail -40 "$info_log" 2>/dev/null || true
+        echo "---- debootstrap.log (tail): ----"
+        tail -40 {{ target_mount }}/debootstrap/debootstrap.log 2>/dev/null || true
+        exit "$rc"
       args:
         executable: /bin/bash
       when:
