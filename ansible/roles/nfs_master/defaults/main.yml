@@ -50,8 +50,20 @@ debian_mirror: http://deb.debian.org/debian
 debian_release: bookworm
 debian_security_release: bookworm-security
 debian_security_mirror: http://deb.debian.org/debian-security
+# Kernel package to install into the image. The default uses Debian's
+# per-architecture meta-package (linux-image-amd64, -arm64, -armhf,
+# -i386, -ppc64el, -riscv64, -s390x), which exists for most arches.
+# EXCEPTION: armel has NO generic meta-package — Debian ships only
+# flavor-specific metas (linux-image-marvell for kirkwood/SheevaPlug,
+# etc.), because armel spans unrelated SoC families with no common
+# kernel config. For an armel build, override kernel_package in
+# group_vars to the board's flavor meta (e.g. linux-image-marvell for
+# kirkwood). Keep the version in sync with whatever uImage/uInitrd you
+# actually boot (bookworm's linux-image-marvell currently tracks
+# 6.1.0-50-marvell, 6.1.176-1).
+kernel_package: linux-image-{{ target_arch }}
 master_base_packages:
-  - linux-image-{{ target_arch }}    # linux-image-amd64 | linux-image-arm64 | ...
+  - "{{ kernel_package }}"    # linux-image-amd64 | linux-image-arm64 | linux-image-marvell | ...
   - nfs-common
   - initramfs-tools
   - curl
