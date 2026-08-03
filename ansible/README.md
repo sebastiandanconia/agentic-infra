@@ -115,6 +115,7 @@ ansible/
 │   │   ├── site_bootstrap.yml
 │   │   ├── 00_setup_debootstrap.yml
 │   │   ├── 10_chroot_build.yml
+│   │   ├── 15_build_rpi_kernel.yml   # Pi 4/5: build raspberrypi/linux + initrd, stage to TFTP
 │   │   ├── 20_publish_kernel.yml
 │   │   ├── 90_teardown.yml
 │   │   └── differentiate_host.yml
@@ -182,6 +183,7 @@ Style goals: explicit task names, modules over shell, vars at the top of the pla
 | `playbooks/ubuntu_style_sudo.yml` | Sudo policy: sudo group with password, root locked, `PermitRootLogin prohibit-password`. Imported by the master build. |
 | `playbooks/nfs-root-provision/site_bootstrap.yml` | Full NFS master-image pipeline (debootstrap → chroot build → publish kernel/initrd → teardown). |
 | `playbooks/nfs-root-provision/00_setup_debootstrap.yml` … `90_teardown.yml` | Individual master-build phases. |
+| `playbooks/nfs-root-provision/15_build_rpi_kernel.yml` | Build the Raspberry Pi kernel (raspberrypi/linux) + initrd for Pi 4/5 netboot. Cross-compile on the driver, install modules into the shared nfs-root, build an initrd in the chroot, and stage vmlinuz/initrd/dtbs/boot configs to the per-board TFTP dirs. Needed because the Debian trixie generic arm64 kernel (6.12) lacks the BCM2712 PCIe host driver the Pi 5 requires (mainline gained it in 6.15); bcm2712_defconfig covers both Pi 4 and Pi 5. Run after 10_chroot_build.yml. |
 | `playbooks/nfs-root-provision/differentiate_host.yml` | Per-clone hostname/identity (chroot before first boot, or hostname-only over SSH). |
 
 NFS root bootstrap details: [`roles/nfs_master/README.md`](roles/nfs_master/README.md).

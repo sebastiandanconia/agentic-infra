@@ -1,0 +1,399 @@
+# playbooks/nfs-root-provision/15_build_rpi_kernel.yml
+#
+# Build the Raspberry Pi kernel (raspberrypi/linux) + initrd for Pi 4/5
+# netboot: cross-compile on the driver, install the modules into the nfs-root
+# chroot, build an initrd against those modules, and stage vmlinuz + initrd +
+# dtbs + boot configs to the per-board TFTP dirs.
+#
+# WHY this playbook exists (verified against upstream source, Aug 2026):
+# The Debian trixie generic arm64 kernel (6.12, mainline-based) does NOT drive
+# a Pi 5. The BCM2712 PCIe host driver — PCIE_BRCMSTB with the
+# `brcm,bcm2712-pcie` of_match + bcm2712_cfg — landed in MAINLINE v6.15 and is
+# absent from v6.12/v6.13/v6.14, and Debian trixie ships NO Raspberry Pi kernel
+# flavour in main/binary-arm64 (only generic arm64 / -16k / -cloud / -rt). The
+# rpi-6.12.y branch of raspberrypi/linux backports that support, so it drives
+# the Pi 5. Without it the Pi 5 has no PCIe -> no RP1 southbridge -> no Ethernet
+# (macb) -> cannot mount NFS root -> panic-hang, and no display -> black screen.
+# (The Pi 4 works on the generic kernel because BCM2711 PCIe IS in mainline 6.12
+# and its GENET Ethernet is internal to the SoC — no PCIe/RP1 dependency.)
+#
+# ONE KERNEL COVERS BOTH Pi 4 AND Pi 5: bcm2712_defconfig enables BCM2712 (Pi 5)
+# AND BCM2711 (Pi 4) SoC support, plus BOTH Ethernet drivers — GENET (Pi 4,
+# =y) and MACB (Pi 5, =y) — and the PCIe host (PCIE_BRCMSTB defaults to =y when
+# ARCH_BRCMSTB=y, which the defconfig sets). It also has IP_PNP_DHCP, ROOT_NFS,
+# and NFS_FS all built-in (=y), so the kernel can mount NFS root with NO
+# initramfs at all (set rpi_build_initrd: false). We build an initrd anyway for
+# parity with the existing pipeline and flexibility; with the drivers built-in
+# the initrd is small and its MODULES setting is largely immaterial.
+#
+# Page size: bcm2712_defconfig uses CONFIG_ARM64_16K_PAGES=y (16K pages;
+# CONFIG_LOCALVERSION="-v8-16k", so the modules dir is <ver>-v8-16k). Debian
+# trixie arm64 userland is 16K-clean and shares the NFS root fine with a 4K-page
+# kernel — page size is a kernel runtime property and the rootfs is
+# page-size-agnostic.
+#
+# Prerequisites:
+#   * 00_setup_debootstrap.yml has run — NFS at /mnt/target, bind-mounts up.
+#   * 10_chroot_build.yml has run — initramfs-tools + base system in the chroot.
+#   * Driver is amd64 (cross-compile via gcc-aarch64-linux-gnu). For an arm64
+#     driver, set rpi_cross_compile: "".
+#   * SSH key to rpi_tftp_host authorized for writes under rpi_tftp_root.
+#
+# This does NOT replace the generic kernel in the chroot — the rpi modules are
+# installed ALONGSIDE the generic kernel's modules in /lib/modules, and the rpi
+# vmlinuz/initrd are staged to the per-board TFTP dirs, not /boot/vmlinuz. The
+# generic kernel (and 20_publish_kernel.yml) are untouched, so the Pi 4 may keep
+# booting the generic kernel while the Pi 5 boots the rpi kernel from the same
+# shared NFS root. Set rpi_stage_boards: [rpi4, rpi5] to also switch the Pi 4 to
+# the rpi kernel.
+#
+# Pi 4 firmware (start4.elf, fixup4.dat) is NOT staged here — it comes from the
+# Debian raspi-firmware package (see arm64/README-netboot-pi4.md) and must
+# already be present in the rpi4/ TFTP dir. The Pi 5 needs no boot-partition
+# firmware (its GPU firmware is in the EEPROM).
+#
+# Usage:
+#   sudo -H ansible-playbook -i hosts.ini playbooks/nfs-root-provision/15_build_rpi_kernel.yml
+#
+# Common overrides (group_vars/all.yml or -e):
+#   rpi_kernel_branch: rpi-6.12.y
+#   rpi_kernel_defconfig: bcm2712_defconfig
+#   rpi_stage_boards: [rpi5]            # add rpi4 to use the rpi kernel on the Pi 4 too
+#   rpi_build_initrd: true              # false = kernel does NFS root, no initrd
+#   rpi_tftp_host: tucuman
+#   rpi_tftp_root: /srv/tftpboot
+#   rpi_write_boot_configs: true        # overwrite config.txt/cmdline.txt in each board dir
+
+---
+- name: Build Raspberry Pi kernel + initrd and stage to per-board TFTP
+  hosts: master_build_driver
+  become: true
+  gather_facts: true
+
+  vars:
+    target_mount: /mnt/target
+
+    # ── Kernel source / build ─────────────────────────────────────────────
+    rpi_kernel_repo: https://github.com/raspberrypi/linux.git
+    rpi_kernel_branch: rpi-6.12.y
+    rpi_kernel_build_dir: /usr/src/rpi-linux
+    rpi_kernel_defconfig: bcm2712_defconfig
+    rpi_kernel_arch: arm64
+    # Cross-compile prefix. Empty for an arm64 driver (native build).
+    rpi_cross_compile: aarch64-linux-gnu-
+    rpi_build_jobs: "{{ ansible_facts.processor_vcpus | default(4) }}"
+
+    # ── Staging ───────────────────────────────────────────────────────────
+    # Boards to stage the rpi kernel into. rpi5 needs it; add rpi4 to switch
+    # the Pi 4 onto the rpi kernel too (it already boots the generic kernel).
+    rpi_stage_boards: [rpi5]
+    # Per-board dtb(s) to copy from arch/arm64/boot/dts/broadcom/.
+    rpi_board_dtbs:
+      rpi5:
+        - bcm2712-rpi-5-b.dtb
+      rpi4:
+        - bcm2711-rpi-4-b.dtb
+    # rpi_tftp_root is the path ON the TFTP host that the tftp-hpa container
+    # bind-mounts as its root (NOT the in-container /tftpboot view). Each board
+    # gets a subdir: <rpi_tftp_root>/<board>/ matching the EEPROM TFTP_PREFIX_STR.
+    rpi_tftp_host: "{{ tftp_dest_host | default('') }}"
+    rpi_tftp_root: /srv/tftpboot
+    rpi_write_boot_configs: true
+
+    # ── Initrd ────────────────────────────────────────────────────────────
+    # The rpi kernel has GENET/MACB/PCIe/NFS all built-in, so this is largely
+    # immaterial; `most` is a safe superset. Ignored when rpi_build_initrd: false.
+    rpi_build_initrd: true
+    rpi_initramfs_modules: most
+
+    # ── Driver-side staging scratch ───────────────────────────────────────
+    rpi_stage_scratch: /tmp/rpi-stage
+
+  tasks:
+
+    # ── Prerequisite guard ────────────────────────────────────────────────
+    - name: Assert the chroot is bootstrapped and bind-mounts are up
+      ansible.builtin.shell: |
+        test -x {{ target_mount }}/usr/sbin/update-initramfs || \
+          { echo "initramfs-tools missing in {{ target_mount }} — run 10_chroot_build.yml first"; exit 2; }
+        mountpoint -q {{ target_mount }}/proc && mountpoint -q {{ target_mount }}/dev || \
+          { echo "bind-mounts down at {{ target_mount }} — run 00_setup_debootstrap.yml first"; exit 2; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Assert a TFTP staging host is configured
+      ansible.builtin.fail:
+        msg: >-
+          rpi_tftp_host is empty — set tftp_dest_host (or rpi_tftp_host) in
+          group_vars/all.yml, e.g. rpi_tftp_host: tucuman
+      when: not rpi_tftp_host
+
+    # ── Resolve the NFS server to an IP for the kernel cmdline ────────────
+    # The Pi kernel does NFS root with no DNS available, so the cmdline
+    # nfsroot= must be an IP, not a hostname. nfs_server (group_vars) is a
+    # hostname on the driver; resolve it here. Falls through unchanged if it
+    # is already dotted-decimal.
+    - name: Resolve nfs_server to an IPv4 for the kernel cmdline
+      ansible.builtin.shell: |
+        set -e
+        s="{{ nfs_server }}"
+        if [[ "$s" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then echo "$s"; exit 0; fi
+        ip=$(getent ahostsv4 "$s" | awk '{print $1}' | sort -u | head -1)
+        [ -n "$ip" ] || { echo "could not resolve nfs_server '$s' to an IPv4" >&2; exit 2; }
+        echo "$ip"
+      args:
+        executable: /bin/bash
+      register: nfs_ip_resolve
+      changed_when: false
+
+    - name: Set NFS root facts for the boot configs
+      ansible.builtin.set_fact:
+        rpi_nfs_server_ip: "{{ nfs_ip_resolve.stdout | trim }}"
+        # config.txt lines — omit the initramfs line when booting without an initrd.
+        rpi_config_lines: >-
+          {{ ['arm_64bit=1', 'enable_uart=1', 'kernel=vmlinuz']
+             + (['initramfs initrd.img followkernel'] if (rpi_build_initrd | bool) else []) }}
+        # cmdline.txt — ONE line (Pi firmware requires a single line).
+        rpi_cmdline: >-
+          root=/dev/nfs nfsroot={{ nfs_ip_resolve.stdout | trim }}:{{ nfs_install_root }},v3,tcp
+          ip=dhcp rw rootwait console=serial0,115200 console=tty1
+
+    # ── Build dependencies on the driver ──────────────────────────────────
+    - name: Install kernel build deps + aarch64 cross toolchain on the driver
+      ansible.builtin.apt:
+        name:
+          - build-essential
+          - bc
+          - bison
+          - flex
+          - libssl-dev
+          - libncurses-dev
+          - kmod
+          - cpio
+          - rsync
+          - git
+          - gcc-aarch64-linux-gnu
+        state: present
+        update_cache: true
+
+    # ── Kernel source ─────────────────────────────────────────────────────
+    # Shallow clone of the pinned branch (~hundreds of MB, not the full ~2GB
+    # history). update: true fetches on re-run so the branch tip is current.
+    - name: Clone raspberrypi/linux (shallow, pinned branch)
+      ansible.builtin.git:
+        repo: "{{ rpi_kernel_repo }}"
+        dest: "{{ rpi_kernel_build_dir }}"
+        version: "{{ rpi_kernel_branch }}"
+        depth: 1
+        update: true
+      async: 1200
+      poll: 15
+
+    # ── Configure ─────────────────────────────────────────────────────────
+    - name: Apply defconfig ({{ rpi_kernel_defconfig }})
+      ansible.builtin.command: >-
+        make -C {{ rpi_kernel_build_dir }}
+        ARCH={{ rpi_kernel_arch }} CROSS_COMPILE={{ rpi_cross_compile }}
+        {{ rpi_kernel_defconfig }}
+      changed_when: true
+
+    # kernelrelease is captured AFTER the build (below), not here: a pre-build
+    # `make kernelrelease` reads CONFIG_LOCALVERSION from include/config/auto.conf,
+    # and `make <defconfig>` does not reliably run syncconfig to produce auto.conf,
+    # so it could return "6.12.86" without the "-v8-16k" LOCALVERSION suffix —
+    # giving a wrong modules path. The build writes include/config/kernel.release
+    # (KERNELVERSION + CONFIG_LOCALVERSION), which is authoritative.
+
+    - name: Show build plan
+      ansible.builtin.debug:
+        msg:
+          - "defconfig           : {{ rpi_kernel_defconfig }}  (branch {{ rpi_kernel_branch }})"
+          - "build jobs          : {{ rpi_build_jobs }}"
+          - "stage boards        : {{ rpi_stage_boards }}"
+          - "NFS root (cmdline)  : {{ rpi_nfs_server_ip }}:{{ nfs_install_root }}"
+          - "initrd              : {{ 'build (MODULES=' ~ rpi_initramfs_modules ~ ')' if (rpi_build_initrd | bool) else 'none — kernel does NFS root (ROOT_NFS=y)' }}"
+          - "kernel release      : (captured after build)"
+
+    # ── Build (the long pole) ─────────────────────────────────────────────
+    # Image.gz = gzipped arm64 Image the Pi firmware loads (it sniffs gzip
+    # magic and decompresses); named vmlinuz on the TFTP side. modules +
+    # dtbs in the same make.
+    - name: Build Image.gz, modules, and dtbs (cross-compile)
+      ansible.builtin.command: >-
+        make -C {{ rpi_kernel_build_dir }}
+        ARCH={{ rpi_kernel_arch }} CROSS_COMPILE={{ rpi_cross_compile }}
+        -j{{ rpi_build_jobs }} Image.gz modules dtbs
+      async: 7200
+      poll: 30
+      changed_when: true
+
+    # The build writes include/config/kernel.release with the full release
+    # string (e.g. 6.12.86-v8-16k). This is the authoritative kver used for
+    # the modules path, vmlinuz/initrd naming, depmod, and staging.
+    - name: Read the kernel release the build wrote
+      ansible.builtin.command: cat {{ rpi_kernel_build_dir }}/include/config/kernel.release
+      register: krel_file
+      changed_when: false
+
+    - name: Set rpi kernel version fact
+      ansible.builtin.set_fact:
+        rpi_kver: "{{ krel_file.stdout | trim }}"
+
+    - name: Fail if the kernel release is empty
+      ansible.builtin.fail:
+        msg: "include/config/kernel.release is empty — the build did not complete its prepare phase."
+      when: not rpi_kver
+
+    - name: Show resolved kernel release
+      ansible.builtin.debug:
+        msg: "rpi kernel release: {{ rpi_kver }}"
+
+    - name: Stat the built Image.gz
+      ansible.builtin.stat:
+        path: "{{ rpi_kernel_build_dir }}/arch/arm64/boot/Image.gz"
+      register: imagegz
+
+    - name: Fail if Image.gz was not produced
+      ansible.builtin.fail:
+        msg: "Build finished but arch/arm64/boot/Image.gz is absent — check the build output above."
+      when: not imagegz.stat.exists
+
+    # ── Install modules into the nfs-root chroot ──────────────────────────
+    # INSTALL_MOD_STRIP=1 drops debug info (smaller modules over NFS). The
+    # modules land in <target>/lib/modules/<rpi_kver>/ alongside the generic
+    # kernel's modules — the shared NFS root serves both.
+    - name: Install modules into the chroot (stripped)
+      ansible.builtin.command: >-
+        make -C {{ rpi_kernel_build_dir }}
+        ARCH={{ rpi_kernel_arch }} CROSS_COMPILE={{ rpi_cross_compile }}
+        INSTALL_MOD_PATH={{ target_mount }} INSTALL_MOD_STRIP=1 modules_install
+      changed_when: true
+
+    # modules_install ran the driver's (amd64) depmod; regenerate with the
+    # target's depmod inside the chroot so modules.dep matches the arm64 tree.
+    - name: Regenerate modules.dep inside the chroot
+      ansible.builtin.command: chroot {{ target_mount }} depmod -a {{ rpi_kver }}
+      changed_when: true
+
+    # Place a versioned vmlinuz in the chroot /boot so update-initramfs and
+    # any /boot/vmlinuz-* hook find it. We do NOT touch the /boot/vmlinuz
+    # symlink — that stays on the generic kernel so 20_publish_kernel.yml is
+    # undisturbed.
+    - name: Copy Image.gz into the chroot as vmlinuz-{{ rpi_kver }}
+      ansible.builtin.copy:
+        src: "{{ rpi_kernel_build_dir }}/arch/arm64/boot/Image.gz"
+        dest: "{{ target_mount }}/boot/vmlinuz-{{ rpi_kver }}"
+        owner: root
+        group: root
+        mode: '0644'
+        remote_src: true
+
+    # ── Build the initrd in the chroot (optional) ─────────────────────────
+    # A conf.d drop-in sets MODULES for this build only; removed afterward so
+    # the generic kernel's initramfs.conf (MODULES=netboot) is unchanged.
+    - name: Drop a temporary MODULES override for the rpi initrd build
+      ansible.builtin.copy:
+        dest: "{{ target_mount }}/etc/initramfs-tools/conf.d/zz-rpi-build.conf"
+        content: "MODULES={{ rpi_initramfs_modules }}\n"
+        owner: root
+        group: root
+        mode: '0644'
+      when: rpi_build_initrd | bool
+
+    - name: Build initrd for the rpi kernel in the chroot
+      ansible.builtin.command: chroot {{ target_mount }} update-initramfs -u -k {{ rpi_kver }}
+      when: rpi_build_initrd | bool
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      async: 1800
+      poll: 15
+
+    - name: Remove the temporary MODULES override
+      ansible.builtin.file:
+        path: "{{ target_mount }}/etc/initramfs-tools/conf.d/zz-rpi-build.conf"
+        state: absent
+      when: rpi_build_initrd | bool
+
+    - name: Stat the built initrd
+      ansible.builtin.stat:
+        path: "{{ target_mount }}/boot/initrd.img-{{ rpi_kver }}"
+      register: initrdbuilt
+      when: rpi_build_initrd | bool
+
+    - name: Fail if the initrd was not produced
+      ansible.builtin.fail:
+        msg: "update-initramfs finished but /boot/initrd.img-{{ rpi_kver }} is absent."
+      when:
+        - rpi_build_initrd | bool
+        - not (initrdbuilt.stat.exists | default(false))
+
+    # ── Prepare per-board boot configs on the driver ──────────────────────
+    - name: Create the driver-side staging scratch dir
+      ansible.builtin.file:
+        path: "{{ rpi_stage_scratch }}/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop: "{{ rpi_stage_boards }}"
+      when: rpi_write_boot_configs | bool
+
+    - name: Write config.txt per board on the driver
+      ansible.builtin.copy:
+        dest: "{{ rpi_stage_scratch }}/{{ item }}/config.txt"
+        content: "{{ rpi_config_lines | join('\n') }}\n"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ rpi_stage_boards }}"
+      when: rpi_write_boot_configs | bool
+
+    - name: Write cmdline.txt per board on the driver (single line)
+      ansible.builtin.copy:
+        dest: "{{ rpi_stage_scratch }}/{{ item }}/cmdline.txt"
+        content: "{{ rpi_cmdline | trim }}\n"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ rpi_stage_boards }}"
+      when: rpi_write_boot_configs | bool
+
+    # ── Stage to per-board TFTP dirs over SCP ─────────────────────────────
+    # scp has no mkdir; ssh first. vmlinuz + initrd come from the chroot /boot;
+    # dtbs from the build tree; config.txt/cmdline.txt from the scratch dir.
+    - name: Stage vmlinuz + initrd + dtbs + boot configs to each board dir
+      ansible.builtin.shell: |
+        set -e
+        board="{{ item }}"
+        broot="{{ rpi_tftp_root }}/$board"
+        dtbs="{{ rpi_board_dtbs[item] | join(' ') }}"
+        ssh "{{ rpi_tftp_host }}" "mkdir -p '$broot'"
+        scp "{{ target_mount }}/boot/vmlinuz-{{ rpi_kver }}" "{{ rpi_tftp_host }}:$broot/vmlinuz"
+        {% if rpi_build_initrd | bool %}
+        scp "{{ target_mount }}/boot/initrd.img-{{ rpi_kver }}" "{{ rpi_tftp_host }}:$broot/initrd.img"
+        {% endif %}
+        for d in $dtbs; do
+          scp "{{ rpi_kernel_build_dir }}/arch/arm64/boot/dts/broadcom/$d" "{{ rpi_tftp_host }}:$broot/$d"
+        done
+        {% if rpi_write_boot_configs | bool %}
+        scp "{{ rpi_stage_scratch }}/$board/config.txt"  "{{ rpi_tftp_host }}:$broot/config.txt"
+        scp "{{ rpi_stage_scratch }}/$board/cmdline.txt" "{{ rpi_tftp_host }}:$broot/cmdline.txt"
+        {% endif %}
+        echo "staged -> {{ rpi_tftp_host }}:$broot/ (vmlinuz{% if rpi_build_initrd | bool %} initrd.img{% endif %} $dtbs{% if rpi_write_boot_configs | bool %} config.txt cmdline.txt{% endif %})"
+      args:
+        executable: /bin/bash
+      loop: "{{ rpi_stage_boards }}"
+      changed_when: true
+
+    # ── Summary / next steps ──────────────────────────────────────────────
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "rpi kernel {{ rpi_kver }} built and staged to {{ rpi_stage_boards | join(', ') }} under {{ rpi_tftp_root }}/."
+          - "Modules installed in the shared nfs-root at {{ target_mount }}/lib/modules/{{ rpi_kver }}/ (alongside the generic kernel)."
+          - "Next:"
+          - "  * Pi 5: flash the EEPROM with TFTP_PREFIX=1 + TFTP_PREFIX_STR=rpi5/ + TFTP_IP=<tftp ip> + BOOT_ORDER=0xf2"
+          - "  * Pi 4 (if staged): Pi 4 firmware start4.elf + fixup4.dat must already be in rpi4/ — this playbook does NOT stage them."
+          - "  * Watch the fetch:  docker logs -f tftp  (on the tftp-hpa host)."
+          - "  * Serial console (GPIO14/15, 115200 8N1): config.txt now sets enable_uart=1 + cmdline has console=serial0,115200."
