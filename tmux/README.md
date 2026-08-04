@@ -34,7 +34,7 @@ Coding agents are safest inside a containment boundary (see `lxc/` in this repo)
 Session name is **required**. The tmux session is always `pair-<session>` so it never collides with agent UI sessions in `tmux ls`.
 
 ```sh
-# From the directory you want treated as the work root ($PWD is frozen for the session):
+# From the directory you want treated as the work root (frozen at create):
 ./pair-shell.sh nftables-docker           # start or attach
 ./pair-shell.sh nftables-docker tail      # follow the transcript elsewhere
 ./pair-shell.sh nftables-docker path      # print absolute transcript path
@@ -46,15 +46,22 @@ Session name is **required**. The tmux session is always `pair-<session>` so it 
 
 ### Transcript path
 
-Default layout (unless overridden):
+Default layout at **create** time (unless overridden):
 
 ```text
 $PWD/.pair-shell/<session>.log
 ```
 
-`$PWD` here is the working directory **when the session was first created** (or `PAIR_START_DIR` if you set it). The script freezes that path into the tmux session (`@pair_transcript`, `@pair_start_dir`) so later `attach` / `tail` / `path` / `clear` from another cwd still hit the same file.
+The work root and absolute transcript path are frozen into the tmux session (`@pair_start_dir`, `@pair_transcript`) when the session is first created. Later `attach` / `tail` / `path` / `clear` from another cwd still hit that same file; reattach does not retarget the log.
 
-On start, and again the first time you detach from a **newly created** session, the script prints the transcript location in `$PWD/...` form plus the absolute path.
+Printed paths keep both forms when they differ:
+
+- **Short form** uses a literal `$PWD/...` prefix. Here `$PWD` always means the cwd of the shell that should read the message — the same directory `sh -c 'echo "$PWD"'` would print in that shell — never a frozen start dir that differs from that shell's cwd. Outer CLI hints recompute the short form from **this process's** cwd (so attach from a parent directory may show `$PWD/subdir/.pair-shell/<session>.log`). The in-pane banner and status bar use the **session start dir** (pane cwd) as `$PWD`.
+- **Absolute form** is the frozen real path (source of truth for agents).
+
+If the transcript is not under the relevant cwd, short form falls back to the absolute path.
+
+On start, and again the first time you detach from a **newly created** session, the script prints these locations.
 
 `path` prints only the absolute path on stdout (handy for agents and scripts).
 
@@ -79,9 +86,9 @@ Add this to projects where you use pair-shell (transcripts often contain host de
 After starting a session:
 
 ```text
-I am working on the host in a pair-shell session. Read-only live transcript:
-$PWD/.pair-shell/<session>.log
-(absolute path from `./pair-shell.sh <session> path`).
+I am working on the host in a pair-shell session. Read-only live transcript
+(absolute path from `./pair-shell.sh <session> path`). Prefer that absolute
+path; a $PWD-relative short form is only valid for the shell that printed it.
 I own the keyboard. Suggest next steps; do not assume you can run host commands.
 ```
 

@@ -66,14 +66,31 @@ START_DIR="${PAIR_START_DIR:-$PWD}"
 LOG_DIR="${PAIR_LOG_DIR:-$START_DIR/.pair-shell}"
 TRANSCRIPT="${PAIR_TRANSCRIPT:-$LOG_DIR/${SESSION_NAME}.log}"
 
-# Display form prefers a $PWD-literal path when the default layout applies.
-transcript_display() {
-  local default_ts="${START_DIR}/.pair-shell/${SESSION_NAME}.log"
-  if [[ -z "${PAIR_TRANSCRIPT:-}" && -z "${PAIR_LOG_DIR:-}" && "$TRANSCRIPT" == "$default_ts" ]]; then
-    printf '%s\n' "\$PWD/.pair-shell/${SESSION_NAME}.log"
+# Short path form: $PWD always means the cwd of the shell that should read
+# the message — i.e. the same directory `sh -c 'echo "$PWD"'` prints when
+# run in that shell — never a frozen start dir that differs from that cwd.
+# root is that shell's cwd. If TRANSCRIPT is not under root, short form is
+# the absolute path (both forms identical).
+transcript_display_for() {
+  local root="${1%/}"
+  local abs="$TRANSCRIPT"
+  if [[ "$abs" == "$root"/* ]]; then
+    printf '%s\n' "\$PWD/${abs#"$root"/}"
+  elif [[ "$abs" == "$root" ]]; then
+    printf '%s\n' '\$PWD'
   else
-    printf '%s\n' "$TRANSCRIPT"
+    printf '%s\n' "$abs"
   fi
+}
+
+# Outer CLI messages: $PWD = this process's cwd.
+transcript_display() {
+  transcript_display_for "$PWD"
+}
+
+# In-pane banner / status: $PWD = session start dir (pane cwd at create).
+transcript_display_in_session() {
+  transcript_display_for "$START_DIR"
 }
 
 print_transcript_hint() {
@@ -122,7 +139,8 @@ ensure_transcript() {
 start_logging_on_pane() {
   # Raw pane output, continuously appended. -o means "only if not already piping".
   tmux pipe-pane -t "$TMUX_SESSION" -o "cat >> $(printf %q "$TRANSCRIPT")"
-  tmux set-option -t "$TMUX_SESSION" status-right "PAIR -> $(transcript_display) | %H:%M"
+  # Status is viewed inside the session; $PWD means the pane/start dir.
+  tmux set-option -t "$TMUX_SESSION" status-right "PAIR -> $(transcript_display_in_session) | %H:%M"
   tmux set-option -t "$TMUX_SESSION" status-style "bg=colour22,fg=white"
 }
 
@@ -149,8 +167,9 @@ cmd_start() {
   start_logging_on_pane
   # Banner inside the pane so it shows up in the transcript too.
   # printf %q keeps $PWD-literal display paths from expanding in the pane shell.
+  # $PWD here means the pane cwd (START_DIR), not whatever outer cwd created us.
   local disp
-  disp="$(transcript_display)"
+  disp="$(transcript_display_in_session)"
   tmux send-keys -t "$TMUX_SESSION" \
     "clear; printf '%s\n' $(printf %q "=== pair-shell: ${SESSION_NAME} ===") $(printf %q "transcript: ${disp}") $(printf %q "absolute:   ${TRANSCRIPT}") $(printf %q "detach: Ctrl-b then d") ''" C-m
 
