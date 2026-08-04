@@ -140,7 +140,7 @@ start_logging_on_pane() {
   # Raw pane output, continuously appended. -o means "only if not already piping".
   tmux pipe-pane -t "$TMUX_SESSION" -o "cat >> $(printf %q "$TRANSCRIPT")"
   # Status is viewed inside the session; $PWD means the pane/start dir.
-  tmux set-option -t "$TMUX_SESSION" status-right "PAIR -> $(transcript_display_in_session) | %H:%M"
+  tmux set-option -t "$TMUX_SESSION" status-right "LOG -> $(transcript_display_in_session) | %H:%M"
   tmux set-option -t "$TMUX_SESSION" status-style "bg=colour22,fg=white"
 }
 

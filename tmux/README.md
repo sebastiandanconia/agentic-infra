@@ -29,6 +29,12 @@ Coding agents are safest inside a containment boundary (see `lxc/` in this repo)
 - Closes the gap between “I did a thing” and “the agent saw the thing” without giving the agent a shell on the host.
 - Shared terminal context without shared control.
 
+### Install
+
+```sh
+install -m 755 pair-shell.sh ~/.local/bin/pair-shell
+```
+
 ### Usage
 
 Session name is **required**. The tmux session is always `pair-<session>` so it never collides with agent UI sessions in `tmux ls`.
@@ -86,15 +92,15 @@ Add this to projects where you use pair-shell (transcripts often contain host de
 After starting a session:
 
 ```text
-I am working on the host in a pair-shell session. Read-only live transcript
-(absolute path from `./pair-shell.sh <session> path`). Prefer that absolute
-path; a $PWD-relative short form is only valid for the shell that printed it.
+I am working in a pair-shell session on the host. Look for a read-only live transcript in directory
+`.pair-shell` (or possibly another location, such as `../.pair-shell`). If you share the same
+namespaces as the host, you may be able to run `pair-shell <session> path`.
 I own the keyboard. Suggest next steps; do not assume you can run host commands.
 ```
 
 ### Security posture
 
-pair-shell is intentionally **not** a way to let the agent drive the host. It is a one-way observability channel for times when you have already stepped outside the container boundary. Keep secrets out of the pane (passwords, tokens, `.env` dumps); the transcript is plain text on disk.
+pair-shell is intentionally **not** a way to let the agent drive the host. It is a one-way observability channel for times when you have already stepped outside the containment boundary. Keep secrets out of the pane (passwords, tokens, `.env` dumps); the transcript is plain text on disk.
 
 ---
 
