@@ -94,13 +94,7 @@ transcript_display_in_session() {
 }
 
 print_transcript_hint() {
-  local display
-  display="$(transcript_display)"
-  echo "Transcript: $display"
-  if [[ "$display" != "$TRANSCRIPT" ]]; then
-    echo "Absolute:   $TRANSCRIPT"
-  fi
-  echo "Start dir:  $START_DIR"
+  echo "Transcript: $TRANSCRIPT"
   echo "tmux:       $TMUX_SESSION"
 }
 
@@ -157,7 +151,6 @@ cmd_start() {
     ensure_transcript
     start_logging_on_pane
     echo "Attaching to existing pair-shell session '$SESSION_NAME'."
-    print_transcript_hint
     attach_or_print_detached
     return
   fi
@@ -167,15 +160,9 @@ cmd_start() {
   start_logging_on_pane
   # Banner inside the pane so it shows up in the transcript too.
   # printf %q keeps $PWD-literal display paths from expanding in the pane shell.
-  # $PWD here means the pane cwd (START_DIR), not whatever outer cwd created us.
-  local disp
-  disp="$(transcript_display_in_session)"
   tmux send-keys -t "$TMUX_SESSION" \
-    "clear; printf '%s\n' $(printf %q "=== pair-shell: ${SESSION_NAME} ===") $(printf %q "transcript: ${disp}") $(printf %q "absolute:   ${TRANSCRIPT}") $(printf %q "detach: Ctrl-b then d") ''" C-m
+    "clear; printf '%s\n' $(printf %q "=== pair-shell: ${SESSION_NAME} ===") $(printf %q "Transcript: ${TRANSCRIPT}") $(printf %q "Detach: Ctrl-b then d") ''" C-m
 
-  echo "Started pair-shell session '$SESSION_NAME'."
-  print_transcript_hint
-  echo "Detach: Ctrl-b then d"
   # Attach when we have a TTY. Do not exec: after first detach from a newly
   # created session, reprint the transcript path for the human/agent.
   if [[ -t 0 && -t 1 ]]; then
@@ -183,7 +170,7 @@ cmd_start() {
     echo
     echo "Detached from pair-shell session '$SESSION_NAME'."
     print_transcript_hint
-    echo "Point the agent at the transcript (read-only). Re-attach: $0 ${SESSION_NAME}"
+    echo "Point your agent at the transcript (read-only). Re-attach: $0 ${SESSION_NAME}"
   else
     echo "No TTY; left session detached. Attach: $0 ${SESSION_NAME}"
     print_transcript_hint
@@ -210,10 +197,7 @@ cmd_script() {
 cmd_tail() {
   load_frozen_from_tmux
   ensure_transcript
-  echo "Following $(transcript_display) (Ctrl-C stops following; session keeps running)"
-  if [[ "$(transcript_display)" != "$TRANSCRIPT" ]]; then
-    echo "Absolute: $TRANSCRIPT"
-  fi
+  echo "Following $TRANSCRIPT (Ctrl-C stops following; session keeps running)"
   exec tail -n +1 -F "$TRANSCRIPT"
 }
 

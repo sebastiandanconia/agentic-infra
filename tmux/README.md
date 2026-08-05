@@ -60,14 +60,7 @@ $PWD/.pair-shell/<session>.log
 
 The work root and absolute transcript path are frozen into the tmux session (`@pair_start_dir`, `@pair_transcript`) when the session is first created. Later `attach` / `tail` / `path` / `clear` from another cwd still hit that same file; reattach does not retarget the log.
 
-Printed paths keep both forms when they differ:
-
-- **Short form** uses a literal `$PWD/...` prefix. Here `$PWD` always means the cwd of the shell that should read the message — the same directory `sh -c 'echo "$PWD"'` would print in that shell — never a frozen start dir that differs from that shell's cwd. Outer CLI hints recompute the short form from **this process's** cwd (so attach from a parent directory may show `$PWD/subdir/.pair-shell/<session>.log`). The in-pane banner and status bar use the **session start dir** (pane cwd) as `$PWD`.
-- **Absolute form** is the frozen real path (source of truth for agents).
-
-If the transcript is not under the relevant cwd, short form falls back to the absolute path.
-
-On start, and again the first time you detach from a **newly created** session, the script prints these locations.
+`Transcript` (i.e. the absolute path) is the frozen real path (source of truth for agents). The first time you detach from a **newly created** session, the script prints this location.
 
 `path` prints only the absolute path on stdout (handy for agents and scripts).
 
