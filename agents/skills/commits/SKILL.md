@@ -1,6 +1,6 @@
 ---
 name: commits
-description: Governs Git workflow. Asks the user for permission before making any commits, confirms and records the target branch, keeps all commits local unless the user explicitly approves a push, and never force-pushes without explicit approval. Enforces atomic, non-broken commits with clean commit hygiene (no build artifacts, editor temp files, or unrelated bundled changes), and blocks branch create/rename/delete/merge/rebase without explicit instruction. Also checks the per-project git user.email at the start of any session involving commits and warns when it is a real email address rather than the GitHub-anonymized noreply form. Use whenever commits, branches, rebase/merge, or git identity may be involved.
+description: Governs Git workflow. Asks the user for permission before making any commits, confirms and records the target branch, keeps all commits local unless the user explicitly approves a push, and never force-pushes without explicit approval. Enforces atomic, non-broken commits with clean commit hygiene (no build artifacts, editor temp files, or unrelated bundled changes), and specifies branch and history discipline. Use whenever commits, branches, rebase/merge, or git identity may be involved.
 ---
 
 # Git Workflow
