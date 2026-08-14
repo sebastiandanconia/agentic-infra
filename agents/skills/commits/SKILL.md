@@ -1,16 +1,25 @@
 ---
 name: commits
-description: Governs Git workflow during Autopilot sessions. Asks the user for permission before making any commits, confirms and records the target branch, keeps all commits local unless the user explicitly approves a push, and never force-pushes without explicit approval. Enforces atomic, non-broken commits with clean commit hygiene (no build artifacts, editor temp files, or unrelated bundled changes), and blocks branch create/rename/delete/merge/rebase without explicit instruction. Also checks the per-project git user.email at the start of any session involving commits and warns when it is a real email address rather than the GitHub-anonymized noreply form. Use whenever commits, branches, rebase/merge, or git identity may be involved.
+description: Governs Git workflow. Asks the user for permission before making any commits, confirms and records the target branch, keeps all commits local unless the user explicitly approves a push, and never force-pushes without explicit approval. Enforces atomic, non-broken commits with clean commit hygiene (no build artifacts, editor temp files, or unrelated bundled changes), and blocks branch create/rename/delete/merge/rebase without explicit instruction. Also checks the per-project git user.email at the start of any session involving commits and warns when it is a real email address rather than the GitHub-anonymized noreply form. Use whenever commits, branches, rebase/merge, or git identity may be involved.
 ---
 
 # Git Workflow
 
 ## Commits
 
-- The assistant must ask the user for permission to make commits at the
-  start of each Autopilot session in which commits may be needed.
+By default:
+- The assistant must ask the user for permission to make commits.
 - If permission is granted, confirm the target branch name before making
   any commit. Record that branch name for the remainder of the session.
+
+These default restrictions do not apply when
+```
+Autonomous commits: Authorized
+```
+or similar appears in harness-level prompts such as concatenated from
+`AGENTS.md` files.
+
+However, the following restrictions still apply:
 - All commits stay local unless the user explicitly approves a push.
 - Never push to any remote without explicit per-push approval.
 - Never force-push without explicit approval.
