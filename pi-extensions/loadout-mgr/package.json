@@ -1,0 +1,48 @@
+{
+  "name": "pi-loadout-mgr",
+  "version": "0.1.0",
+  "description": "Named skill/role/workflow loadouts for the pi coding agent, declared in TOML and referenced from any settings.json",
+  "type": "module",
+  "private": true,
+  "keywords": [
+    "pi",
+    "pi.dev",
+    "pi-package",
+    "extension",
+    "loadout",
+    "skills",
+    "toml"
+  ],
+  "author": "James W. Crofts",
+  "license": "GPL-2.0",
+  "homepage": "https://github.com/sebastiandanconia/agentic-infra",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sebastiandanconia/agentic-infra.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sebastiandanconia/agentic-infra/issues"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf node_modules dist coverage && rm -f package-lock.json *.log"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.79.9",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^4.1.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
+  }
+}
