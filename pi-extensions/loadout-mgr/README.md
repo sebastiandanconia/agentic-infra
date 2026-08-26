@@ -140,6 +140,31 @@ pi -e ~/src/agentic-infra/pi-extensions/loadout-mgr
 
 After installing, `/reload` (or restart pi) and reference a loadout as shown above. There is no configuration beyond the `loadouts` array and the TOML files it points at.
 
+### Removal
+
+`pi remove` identifies a package the same way `pi install` does — by source string, not by the npm `name` field in `package.json`:
+
+| Installed via | Remove with |
+| --- | --- |
+| `pi install ~/src/.../loadout-mgr` (local path) | `pi remove ~/src/agentic-infra/pi-extensions/loadout-mgr` — the **same path** you installed with |
+| `pi install npm:pi-loadout-mgr` (published) | `pi remove npm:pi-loadout-mgr` — by package name |
+| `pi install git:github.com/.../loadout-mgr` | `pi remove git:github.com/.../loadout-mgr` — by repo URL |
+
+A bare `pi remove pi-loadout-mgr` does **not** work for a local-path install: `pi` parses an unprefixed argument as a local path, resolves it under the scope base dir (`~/.pi/agent`), and reports “No matching package found.”
+
+Remove from the scope you installed into. `pi remove` defaults to global (`~/.pi/agent/settings.json`); add `-l` for a project-local install (`.pi/settings.json`).
+
+After removing the package, you may also delete any `"loadouts": [...]` arrays you added to your `settings.json` files — `pi remove` does not touch that key. The TOML loadout manifests and the `skills/`, `skills/roles/`, and `skills/workflows/` resource trees are not managed by the extension or by `pi install`/`pi remove` either; they live under your own `<agents>/` directory and are removed by deleting those files directly.
+
+To clean build products from a source checkout of the extension itself:
+
+```bash
+cd ~/src/agentic-infra/pi-extensions/loadout-mgr
+npm run clean
+```
+
+This removes `node_modules/`, `dist/`, `coverage/`, `package-lock.json`, and any `*.log` files, leaving only the source tree.
+
 ## What this extension deliberately does *not* do
 
 - **It does not invent a new resource type.** Skills, roles, and workflows remain whatever pi and herdr already consider them to be. The extension only collects names from a manifest and points the existing loaders at them.
