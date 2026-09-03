@@ -393,7 +393,11 @@ describe("loadout-mgr factory", () => {
     expect(ctx.ui.notify).not.toHaveBeenCalled();
   });
 
-  it("warns at agent-start when a policy file disappears after discovery", async () => {
+  it("injects cached content even if a policy file disappears after discovery", async () => {
+    // Policies are read once at discovery (like AGENTS.md) and cached, so a
+    // file removed between discovery and a turn does NOT drop its content —
+    // the turn still sees the snapshot, with no warning. An edit/removal takes
+    // effect only at the next /reload, matching AGENTS.md exactly.
     const { pi, invoke, invokeAgent } = createMockPi(true);
     makePolicyFile(homeDir, "secrets", "# Secrets\n");
     makeLoadoutFile(homeDir, "ds", `policies = ["secrets"]\n`);
@@ -401,15 +405,36 @@ describe("loadout-mgr factory", () => {
 
     factory(pi);
     await invoke(projectDir);
-    // Remove the policy file after discovery so agent-start can't read it.
     fs.rmSync(policyPath(homeDir, "secrets"));
     const { result, ctx } = await invokeAgent(projectDir, "BASE");
-    // No systemPrompt is returned because no policy entries survived to inject.
-    expect(result?.systemPrompt).toBeUndefined();
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("policy file not found"),
-      "warning",
+    const prompt = result?.systemPrompt ?? "";
+    expect(prompt).toContain(
+      `<project_instructions path="${policyPath(homeDir, "secrets")}">`,
     );
+    expect(ctx.ui.notify).not.toHaveBeenCalled();
+  });
+
+  it("refreshes cached policy content on a second resources_discover (reload)", async () => {
+    // Like AGENTS.md, policies are snapshotted at discovery. A second
+    // discovery (reload) re-reads the files, so an edit between the two
+    // discovers is reflected on the next turn — but an edit between a
+    // discover and a turn is not (see the test above).
+    const { pi, invoke, invokeAgent } = createMockPi(true);
+    makePolicyFile(homeDir, "secrets", "# Secrets v1\n");
+    makeLoadoutFile(homeDir, "ds", `policies = ["secrets"]\n`);
+    writeGlobalSettings([loadoutPath(homeDir, "ds")]);
+
+    factory(pi);
+    await invoke(projectDir);
+    let { result } = await invokeAgent(projectDir, "BASE");
+    expect(result?.systemPrompt ?? "").toContain("Secrets v1");
+
+    // Edit the fragment, then reload (a second resources_discover).
+    fs.writeFileSync(policyPath(homeDir, "secrets"), "# Secrets v2\n");
+    await invoke(projectDir);
+    ({ result } = await invokeAgent(projectDir, "BASE"));
+    expect(result?.systemPrompt ?? "").toContain("Secrets v2");
+    expect(result?.systemPrompt ?? "").not.toContain("Secrets v1");
   });
 
   it("fills an empty <project_context> block (prose only, no AGENTS.md entries)", async () => {

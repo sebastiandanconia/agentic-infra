@@ -57,14 +57,42 @@ function dedupeOrdered(items: string[]): string[] {
   return out;
 }
 
-// Per-scope policy fragment paths, refreshed on every resources_discover and
-// consumed by the before_agent_start handler. Global-scope policies (from
-// ~/.pi/agent/settings.json) sequence as if they were an AGENTS.md high in the
-// tree; project-scope policies (from <cwd>/.pi/settings.json) sequence as if
-// they were the AGENTS.md closest to the working directory. See the README for
-// the rationale.
-let globalPolicyPaths: string[] = [];
-let projectPolicyPaths: string[] = [];
+// Cached, per-scope policy fragments already wrapped in the same
+// <project_instructions>...</project_instructions> wrapper pi uses for
+// AGENTS.md. Read once per resources_discover (startup | reload) — NOT
+// re-read per turn — so policies follow AGENTS.md semantics exactly: an edit
+// to a fragment between turns has no effect until /reload. The cache is
+// consumed by the before_agent_start handler, which re-splices it into the
+// (per-turn-reset) system prompt. Global-scope policies (from
+// ~/.pi/agent/settings.json) sequence as if they were an AGENTS.md high in
+// the tree; project-scope policies (from <cwd>/.pi/settings.json) sequence as
+// if they were the AGENTS.md closest to the working directory. See the README
+// for the rationale.
+let cachedGlobalEntries: string[] = [];
+let cachedProjectEntries: string[] = [];
+
+/** Read a policy fragment, returning null (and a warning) if missing or
+ *  unreadable so one bad policy never breaks discovery. */
+function readPolicyFragment(p: string, warnings: string[]): string | null {
+  if (!realFs.existsSync(p)) {
+    warnings.push(`policy file not found: ${p}`);
+    return null;
+  }
+  try {
+    return realFs.readFileSync(p, "utf-8");
+  } catch (e) {
+    warnings.push(`could not read policy ${p}: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** Wrap a policy fragment in the same <project_instructions> wrapper pi uses
+ *  for AGENTS.md entries, so policies are fed to the model through the same
+ *  context channel. */
+function wrapPolicy(p: string, content: string): string {
+  const body = content.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  return `<project_instructions path="${p}">\n${body}\n</project_instructions>`;
+}
 
 export default function loadoutMgr(pi: ExtensionAPI) {
   pi.on("resources_discover", async (event, ctx) => {
@@ -121,10 +149,29 @@ export default function loadoutMgr(pi: ExtensionAPI) {
     // global and a project loadout is emitted once, in its global position —
     // mirroring how a higher AGENTS.md is read before a closer one and a
     // closer file does not re-append content already supplied from above.
-    globalPolicyPaths = dedupeOrdered(globalPolicies);
-    projectPolicyPaths = dedupeOrdered(projectPolicies).filter(
+    const globalPolicyPaths = dedupeOrdered(globalPolicies);
+    const projectPolicyPaths = dedupeOrdered(projectPolicies).filter(
       (p) => !globalPolicyPaths.includes(p),
     );
+
+    // Read each policy fragment ONCE, here at discovery time (startup |
+    // reload), and cache the wrapped entries. This mirrors pi's own handling
+    // of AGENTS.md (read once during load(), cached, not re-read per turn),
+    // so editing a fragment mid-session has no effect until /reload — no
+    // surprise relative to AGENTS.md. Missing/unreadable fragments warn and
+    // are skipped, never breaking discovery.
+    cachedGlobalEntries = globalPolicyPaths
+      .map((p) => {
+        const content = readPolicyFragment(p, warnings);
+        return content === null ? null : wrapPolicy(p, content);
+      })
+      .filter((e): e is string => e !== null);
+    cachedProjectEntries = projectPolicyPaths
+      .map((p) => {
+        const content = readPolicyFragment(p, warnings);
+        return content === null ? null : wrapPolicy(p, content);
+      })
+      .filter((e): e is string => e !== null);
 
     for (const w of warnings) {
       ctx.ui.notify(`loadout-mgr: ${w}`, "warning");
@@ -133,67 +180,24 @@ export default function loadoutMgr(pi: ExtensionAPI) {
     return { skillPaths };
   });
 
-  pi.on("before_agent_start", async (event, ctx) => {
-    if (globalPolicyPaths.length === 0 && projectPolicyPaths.length === 0) {
+  pi.on("before_agent_start", async (event, _ctx) => {
+    // Re-splice the cached (discovery-time) policy entries into this turn's
+    // system prompt. Pi resets systemPrompt to _baseSystemPrompt each turn
+    // when no extension modifies it, so the splice must run every turn to
+    // keep policies present — but it operates purely on the cache, with no
+    // filesystem reads, so it does not make policies any fresher than
+    // AGENTS.md. Edits take effect only at the next /reload.
+    if (cachedGlobalEntries.length === 0 && cachedProjectEntries.length === 0) {
       return;
     }
 
-    const home = process.env.HOME ?? process.cwd();
     const agentDir = getAgentDir();
-    const warnings: string[] = [];
-
-    // Read each policy fragment, skipping (with a warning) any that are
-    // missing or unreadable so one bad policy never breaks a turn.
-    const readPolicy = (p: string): string | null => {
-      if (!realFs.existsSync(p)) {
-        warnings.push(`policy file not found: ${p}`);
-        return null;
-      }
-      try {
-        return realFs.readFileSync(p, "utf-8");
-      } catch (e) {
-        warnings.push(`could not read policy ${p}: ${(e as Error).message}`);
-        return null;
-      }
-    };
-
-    // Build a <project_instructions> wrapper for a policy fragment, matching
-    // the wrapper pi uses for AGENTS.md entries so policies are fed to the
-    // model through the same context channel.
-    const wrapPolicy = (p: string, content: string): string => {
-      const body = content.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
-      return `<project_instructions path="${p}">\n${body}\n</project_instructions>`;
-    };
-
-    const globalEntries: string[] = [];
-    for (const p of globalPolicyPaths) {
-      const content = readPolicy(p);
-      if (content !== null) globalEntries.push(wrapPolicy(p, content));
-    }
-    const projectEntries: string[] = [];
-    for (const p of projectPolicyPaths) {
-      const content = readPolicy(p);
-      if (content !== null) projectEntries.push(wrapPolicy(p, content));
-    }
-
-    if (globalEntries.length === 0 && projectEntries.length === 0) {
-      for (const w of warnings) {
-        ctx.ui.notify(`loadout-mgr: ${w}`, "warning");
-      }
-      return;
-    }
-
     const newPrompt = injectPolicies(
       event.systemPrompt,
-      globalEntries,
-      projectEntries,
+      cachedGlobalEntries,
+      cachedProjectEntries,
       agentDir,
-      home,
     );
-
-    for (const w of warnings) {
-      ctx.ui.notify(`loadout-mgr: ${w}`, "warning");
-    }
 
     return { systemPrompt: newPrompt };
   });
@@ -216,7 +220,6 @@ function injectPolicies(
   globalEntries: string[],
   projectEntries: string[],
   agentDir: string,
-  _home: string,
 ): string {
   const blockOpen = "<project_context>";
   const blockClose = "</project_context>";
