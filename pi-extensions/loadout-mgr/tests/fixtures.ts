@@ -33,9 +33,13 @@ export function writeFile(root: string, rel: string, content: string): string {
 
 /** Relative path to a section root within the agents tree. Skills sit at
  *  `agents/skills/`; roles and workflows are nested under it at
- *  `agents/skills/roles/` and `agents/skills/workflows/`. */
-function sectionRelative(section: "skills" | "roles" | "workflows"): string {
+ *  `agents/skills/roles/` and `agents/skills/workflows/`; policies sit in a
+ *  sibling `agents/policies/` directory. */
+function sectionRelative(
+  section: "skills" | "roles" | "workflows" | "policies",
+): string {
   if (section === "skills") return path.join("agents", "skills");
+  if (section === "policies") return path.join("agents", "policies");
   return path.join("agents", "skills", section);
 }
 
@@ -82,7 +86,27 @@ export function loadoutPath(root: string, name: string): string {
 /** Absolute path to a section root. */
 export function sectionRoot(
   root: string,
-  section: "skills" | "roles" | "workflows",
+  section: "skills" | "roles" | "workflows" | "policies",
 ): string {
   return path.join(root, sectionRelative(section));
+}
+
+/** Write a policy fragment at `agents/policies/<name>.md`. Policies are
+ *  single Markdown files (no SKILL.md directory form), mirroring the
+ *  `agents/policies/` layout they were originally authored for. */
+export function makePolicyFile(
+  root: string,
+  name: string,
+  content: string,
+): string {
+  return writeFile(
+    root,
+    path.join("agents", "policies", `${name}.md`),
+    content,
+  );
+}
+
+/** Absolute path to a policy file (without writing it). */
+export function policyPath(root: string, name: string): string {
+  return path.join(root, "agents", "policies", `${name}.md`);
 }

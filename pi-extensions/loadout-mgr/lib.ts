@@ -1,12 +1,14 @@
 // Testable internals for the loadout-mgr pi extension.
 //
-// A loadout is a TOML manifest naming a subset of skills, roles, and
-// workflows that live in fixed subdirectories relative to the loadout file's
-// file. The factory in index.ts stays thin (it touches the ExtensionAPI
-// surface and the real filesystem) and delegates everything unit-testable to
-// here. Every function that would touch the filesystem takes an injectable
-// fs/op object so behavior can be tested deterministically against an
-// in-memory tree.
+// A loadout is a TOML manifest naming a subset of skills, roles, workflows,
+// and policies that live in fixed subdirectories relative to the loadout
+// file. Skills, roles, and workflows are skill-like resources fed into pi's
+// skill discovery; policies are Markdown fragments concatenated into the
+// system prompt the way AGENTS.md files are. The factory in index.ts stays
+// thin (it touches the ExtensionAPI surface and the real filesystem) and
+// delegates everything unit-testable to here. Every function that would
+// touch the filesystem takes an injectable fs/op object so behavior can be
+// tested deterministically against an in-memory tree.
 
 import * as path from "path";
 
@@ -22,20 +24,26 @@ export interface LoadoutSection {
   excludes: string[];
 }
 
-/** Parsed loadout. The three sections resolve from subdirectories of the
- *  loadout file's parent. `inherits` names a parent loadout (stem, no `.toml`)
- *  in the same `loadouts/` directory. */
+/** Parsed loadout. The three skill sections resolve from subdirectories of
+ *  the loadout file's parent. `policies` resolves from a sibling `policies/`
+ *  directory and is delivered as always-on context rather than as skill
+ *  paths (see `resolveLoadout`). `inherits` names a parent loadout (stem,
+ *  no `.toml`) in the same `loadouts/` directory. */
 export interface Loadout {
   skills: LoadoutSection;
   roles: LoadoutSection;
   workflows: LoadoutSection;
+  policies: LoadoutSection;
   inherits?: string;
   description?: string;
 }
 
-/** Result of resolving one loadout file into concrete skill paths. */
+/** Result of resolving one loadout file. `skillPaths` feeds pi's skill
+ *  discovery; `policyPaths` are Markdown fragments concatenated into the
+ *  system prompt the way `AGENTS.md` files are. */
 export interface ResolvedLoadout {
   skillPaths: string[];
+  policyPaths: string[];
   warnings: string[];
 }
 
@@ -52,9 +60,21 @@ export class TomlParseError extends Error {
   }
 }
 
-// The three resource sections, in resolution order.
+// The three skill-like resource sections, in resolution order. These resolve
+// to skill paths fed into pi's skill discovery.
 const SECTION_NAMES = ["skills", "roles", "workflows"] as const;
 type SectionName = (typeof SECTION_NAMES)[number];
+
+// Policies are a fourth section but a different resource kind: Markdown
+// fragments concatenated into the system prompt rather than skill paths. They
+// share the TOML shape and inheritance/exclusion semantics of the skill
+// sections but resolve from a sibling `policies/` directory and are emitted
+// separately, so they are not part of SECTION_NAMES (which drives skill-path
+// resolution).
+const POLICY_NAME = "policies" as const;
+// Every recognized top-level/table section name (skill sections plus
+// policies), used to tell known keys from unknown ones when emitting warnings.
+const ALL_SECTION_NAMES: readonly string[] = [...SECTION_NAMES, POLICY_NAME];
 
 // ---------------------------------------------------------------------------
 // TOML subset parser
@@ -315,14 +335,16 @@ export function parseLoadout(content: string): {
     skills: { includes: [], excludes: [] },
     roles: { includes: [], excludes: [] },
     workflows: { includes: [], excludes: [] },
+    policies: { includes: [], excludes: [] },
   };
 
-  // Top-level array form: skills = ["a", "b", ...].
-  for (const section of SECTION_NAMES) {
+  // Top-level array form: skills = ["a", "b", ...] (and the same for roles,
+  // workflows, and policies).
+  for (const section of ALL_SECTION_NAMES) {
     const rootVal = raw[""][section];
     if (rootVal !== undefined) {
       if (Array.isArray(rootVal)) {
-        loadout[section].includes.push(
+        loadout[section as SectionName | typeof POLICY_NAME].includes.push(
           ...rootVal.filter((x): x is string => typeof x === "string"),
         );
       } else {
@@ -337,7 +359,7 @@ export function parseLoadout(content: string): {
   for (const tableName of Object.keys(raw)) {
     if (tableName === "") {
       for (const k of Object.keys(raw[""])) {
-        if (!(SECTION_NAMES as readonly string[]).includes(k)) {
+        if (!ALL_SECTION_NAMES.includes(k)) {
           warnings.push(`unknown top-level key '${k}', ignoring`);
         }
       }
@@ -359,9 +381,9 @@ export function parseLoadout(content: string): {
       continue;
     }
 
-    if ((SECTION_NAMES as readonly string[]).includes(tableName)) {
+    if (ALL_SECTION_NAMES.includes(tableName)) {
       const table = raw[tableName];
-      const section = tableName as SectionName;
+      const section = tableName as SectionName | typeof POLICY_NAME;
       for (const [k, v] of Object.entries(table)) {
         if (v === true) loadout[section].includes.push(k);
         else if (v === false) loadout[section].excludes.push(k);
@@ -379,6 +401,8 @@ export function parseLoadout(content: string): {
   loadout.roles.excludes = dedupe(loadout.roles.excludes);
   loadout.workflows.includes = dedupe(loadout.workflows.includes);
   loadout.workflows.excludes = dedupe(loadout.workflows.excludes);
+  loadout.policies.includes = dedupe(loadout.policies.includes);
+  loadout.policies.excludes = dedupe(loadout.policies.excludes);
 
   return { loadout, warnings };
 }
@@ -424,11 +448,19 @@ export function resolveLoadoutPath(
  *   - skills    -> `<agents>/skills/`
  *   - roles     -> `<agents>/skills/roles/`
  *   - workflows -> `<agents>/skills/workflows/`
+ *   - policies  -> `<agents>/policies/`
+ *
+ * `skills`, `roles`, and `workflows` are skill-like resources resolved
+ * under the shared `skills/` tree (roles and workflows nested inside it).
+ * `policies` are Markdown fragments concatenated into the system prompt;
+ * they live in a sibling `policies/` directory, mirroring the `agents/policies/`
+ * layout the policies were originally authored for.
  */
 export function resourceRoots(loadoutFile: string): {
   skills: string;
   roles: string;
   workflows: string;
+  policies: string;
 } {
   const loadoutsDir = path.dirname(loadoutFile);
   const agentsDir = path.resolve(loadoutsDir, "..");
@@ -436,6 +468,7 @@ export function resourceRoots(loadoutFile: string): {
     skills: path.join(agentsDir, "skills"),
     roles: path.join(agentsDir, "skills", "roles"),
     workflows: path.join(agentsDir, "skills", "workflows"),
+    policies: path.join(agentsDir, "policies"),
   };
 }
 
@@ -486,12 +519,15 @@ export function mergeSections(
 }
 
 /** Merge a parent loadout into a child. The result carries no `inherits`
- *  (the chain is resolved by the caller) and the child's description wins. */
+ *  (the chain is resolved by the caller) and the child's description wins.
+ *  Policies are merged with the same subtractive semantics as the skill
+ *  sections. */
 export function mergeLoadouts(parent: Loadout, child: Loadout): Loadout {
   return {
     skills: mergeSections(parent.skills, child.skills),
     roles: mergeSections(parent.roles, child.roles),
     workflows: mergeSections(parent.workflows, child.workflows),
+    policies: mergeSections(parent.policies, child.policies),
     description: child.description ?? parent.description,
   };
 }
@@ -503,6 +539,7 @@ export function emptyLoadout(): Loadout {
     skills: { includes: [], excludes: [] },
     roles: { includes: [], excludes: [] },
     workflows: { includes: [], excludes: [] },
+    policies: { includes: [], excludes: [] },
   };
 }
 
@@ -551,11 +588,13 @@ export function resolveInheritanceChain(
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a single loadout file into concrete skill paths. Reads and parses
- * the file, resolves its inheritance chain, then resolves each included name
- * against its section root. Missing files, parse errors, and missing resources
- * produce warnings rather than throwing, so one bad loadout never breaks pi
- * startup.
+ * Resolve a single loadout file into concrete skill and policy paths. Reads
+ * and parses the file, resolves its inheritance chain, then resolves each
+ * included name against its section root. Skills/roles/workflows become skill
+ * paths fed to pi's discovery; policies become Markdown fragment paths to be
+ * concatenated into the system prompt. Missing files, parse errors, and
+ * missing resources produce warnings rather than throwing, so one bad loadout
+ * never breaks pi startup.
  */
 export function resolveLoadout(
   loadoutFile: string,
@@ -566,6 +605,7 @@ export function resolveLoadout(
   if (!fsop.existsSync(loadoutFile)) {
     return {
       skillPaths: [],
+      policyPaths: [],
       warnings: [`loadout file not found: ${loadoutFile}`],
     };
   }
@@ -576,6 +616,7 @@ export function resolveLoadout(
   } catch (e) {
     return {
       skillPaths: [],
+      policyPaths: [],
       warnings: [
         `could not read loadout ${loadoutFile}: ${(e as Error).message}`,
       ],
@@ -588,6 +629,7 @@ export function resolveLoadout(
   } catch (e) {
     return {
       skillPaths: [],
+      policyPaths: [],
       warnings: [
         `could not parse loadout ${loadoutFile}: ${(e as Error).message}`,
       ],
@@ -624,14 +666,18 @@ export function resolveLoadout(
   warnings.push(...resolved.warnings);
 
   const roots = resourceRoots(loadoutFile);
-  const sections: { root: string; section: LoadoutSection }[] = [
+
+  // Skill-like sections: each included name resolves to a skill path. The
+  // order here (skills, then roles, then workflows) matches the original
+  // SECTION_NAMES ordering and is preserved in the emitted skillPaths.
+  const skillSections: { root: string; section: LoadoutSection }[] = [
     { root: roots.skills, section: resolved.loadout.skills },
     { root: roots.roles, section: resolved.loadout.roles },
     { root: roots.workflows, section: resolved.loadout.workflows },
   ];
 
   const skillPaths: string[] = [];
-  for (const { root, section } of sections) {
+  for (const { root, section } of skillSections) {
     for (const name of section.includes) {
       const candidates = resolveResourceCandidates(root, name);
       const found = selectExisting(candidates, (p) => fsop.existsSync(p));
@@ -645,5 +691,23 @@ export function resolveLoadout(
     }
   }
 
-  return { skillPaths, warnings };
+  // Policies: each included name resolves to a Markdown fragment path. The
+  // list order in the loadout is preserved so the caller can concatenate the
+  // fragments in that order. Policy names are not deduplicated across
+  // loadouts here; the caller decides how multiple loadouts' policy sets
+  // combine (see index.ts).
+  const policyPaths: string[] = [];
+  for (const name of resolved.loadout.policies.includes) {
+    const candidates = resolveResourceCandidates(roots.policies, name);
+    const found = selectExisting(candidates, (p) => fsop.existsSync(p));
+    if (found) {
+      policyPaths.push(found);
+    } else {
+      warnings.push(
+        `policy not found: ${name} (looked under ${roots.policies})`,
+      );
+    }
+  }
+
+  return { skillPaths, policyPaths, warnings };
 }

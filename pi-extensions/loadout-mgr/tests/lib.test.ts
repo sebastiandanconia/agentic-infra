@@ -19,9 +19,11 @@ import {
   writeFile,
   makeSkillDir,
   makeSkillFile,
+  makePolicyFile,
   makeLoadoutFile,
   loadoutPath,
   sectionRoot,
+  policyPath,
 } from "./fixtures";
 
 // ---------------------------------------------------------------------------
@@ -201,6 +203,35 @@ herdr = true
     expect(loadout.skills.includes).toEqual(["commits"]);
     expect(loadout.roles.includes).toEqual(["architect"]);
   });
+
+  it("parses the policies array form", () => {
+    const { loadout, warnings } = parseLoadout(
+      `policies = ["secrets", "whitespace"]`,
+    );
+    expect(loadout.policies.includes).toEqual(["secrets", "whitespace"]);
+    expect(loadout.policies.excludes).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("parses the [policies] boolean-table form, mapping false to excludes", () => {
+    const { loadout, warnings } = parseLoadout(`\
+[policies]
+secrets = true
+whitespace = false
+capitalization = true
+`);
+    expect(loadout.policies.includes).toEqual(["secrets", "capitalization"]);
+    expect(loadout.policies.excludes).toEqual(["whitespace"]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("warns when top-level policies is not an array", () => {
+    const { loadout, warnings } = parseLoadout(`policies = "not an array"`);
+    expect(loadout.policies.includes).toEqual([]);
+    expect(warnings).toContain(
+      "top-level 'policies' must be an array of strings, ignoring",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -262,11 +293,12 @@ describe("resolveLoadoutPath", () => {
 });
 
 describe("resourceRoots", () => {
-  it("derives skills/ and the nested skills/roles/ and skills/workflows/ roots", () => {
+  it("derives skills/, the nested skills/roles/ and skills/workflows/ roots, and the sibling policies/ root", () => {
     const roots = resourceRoots("/srv/agents/loadouts/x.toml");
     expect(roots.skills).toBe("/srv/agents/skills");
     expect(roots.roles).toBe("/srv/agents/skills/roles");
     expect(roots.workflows).toBe("/srv/agents/skills/workflows");
+    expect(roots.policies).toBe("/srv/agents/policies");
   });
 });
 
@@ -324,24 +356,27 @@ describe("mergeSections", () => {
 });
 
 describe("mergeLoadouts", () => {
-  it("merges all three sections and lets the child description win", () => {
+  it("merges all sections (including policies) and lets the child description win", () => {
     const merged = mergeLoadouts(
       {
         skills: { includes: ["s1"], excludes: [] },
         roles: { includes: ["r1"], excludes: [] },
         workflows: { includes: ["w1"], excludes: [] },
+        policies: { includes: ["secrets"], excludes: [] },
         description: "parent",
       },
       {
         skills: { includes: ["s2"], excludes: [] },
         roles: { includes: [], excludes: ["r1"] },
         workflows: { includes: [], excludes: [] },
+        policies: { includes: ["whitespace"], excludes: ["secrets"] },
         description: "child",
       },
     );
     expect(merged.skills.includes).toEqual(["s1", "s2"]);
     expect(merged.roles.includes).toEqual([]);
     expect(merged.workflows.includes).toEqual(["w1"]);
+    expect(merged.policies.includes).toEqual(["whitespace"]);
     expect(merged.description).toBe("child");
     expect(merged.inherits).toBeUndefined();
   });
@@ -356,6 +391,7 @@ describe("resolveInheritanceChain", () => {
             skills: { includes: ["p1"], excludes: [] },
             roles: { includes: [], excludes: [] },
             workflows: { includes: [], excludes: [] },
+            policies: { includes: ["secrets"], excludes: [] },
           },
           warnings: [],
         };
@@ -366,10 +402,12 @@ describe("resolveInheritanceChain", () => {
       skills: { includes: ["c1"], excludes: [] },
       roles: { includes: [], excludes: [] },
       workflows: { includes: [], excludes: [] },
+      policies: { includes: ["whitespace"], excludes: [] },
       inherits: "parent",
     };
     const { loadout, warnings } = resolveInheritanceChain(child, loader);
     expect(loadout.skills.includes).toEqual(["p1", "c1"]);
+    expect(loadout.policies.includes).toEqual(["secrets", "whitespace"]);
     expect(loadout.inherits).toBeUndefined();
     expect(warnings).toEqual([]);
   });
@@ -604,6 +642,83 @@ herdr = false
       // herdr is excluded, so no missing-resource warning is emitted for it.
       expect(skillPaths).toEqual([`${sectionRoot(root, "skills")}/commits`]);
       expect(warnings).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("resolves policy fragments from the sibling policies/ dir, in listed order", () => {
+    const { root, fsop, cleanup } = makeTempFs();
+    try {
+      makePolicyFile(root, "secrets", "# Secrets\n\nnever read secrets\n");
+      makePolicyFile(root, "whitespace", "# Whitespace\n\nno trailing ws\n");
+      makeSkillDir(root, "skills", "commits");
+      makeLoadoutFile(
+        root,
+        "ds",
+        `skills = ["commits"]\npolicies = ["whitespace", "secrets"]\n`,
+      );
+      const { skillPaths, policyPaths, warnings } = resolveLoadout(
+        loadoutPath(root, "ds"),
+        fsop,
+      );
+      expect(skillPaths).toEqual([`${sectionRoot(root, "skills")}/commits`]);
+      // Order matches the loadout, not the filesystem.
+      expect(policyPaths).toEqual([
+        policyPath(root, "whitespace"),
+        policyPath(root, "secrets"),
+      ]);
+      expect(warnings).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("warns once per missing policy without failing skills", () => {
+    const { root, fsop, cleanup } = makeTempFs();
+    try {
+      makePolicyFile(root, "secrets", "# Secrets\n");
+      makeSkillDir(root, "skills", "commits");
+      makeLoadoutFile(
+        root,
+        "ds",
+        `skills = ["commits"]\npolicies = ["secrets", "ghost"]\n`,
+      );
+      const { skillPaths, policyPaths, warnings } = resolveLoadout(
+        loadoutPath(root, "ds"),
+        fsop,
+      );
+      expect(skillPaths).toEqual([`${sectionRoot(root, "skills")}/commits`]);
+      expect(policyPaths).toEqual([policyPath(root, "secrets")]);
+      expect(warnings.some((w) => w.includes("policy not found: ghost"))).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("merges inherited policies and applies child excludes", () => {
+    const { root, fsop, cleanup } = makeTempFs();
+    try {
+      makePolicyFile(root, "secrets", "# Secrets\n");
+      makePolicyFile(root, "whitespace", "# Whitespace\n");
+      makePolicyFile(root, "capitalization", "# Caps\n");
+      makeLoadoutFile(
+        root,
+        "base",
+        `policies = ["secrets", "whitespace"]\n`,
+      );
+      makeLoadoutFile(
+        root,
+        "child",
+        `[meta]\ninherits = "base"\n[policies]\ncapitalization = true\nwhitespace = false\n`,
+      );
+      const { policyPaths } = resolveLoadout(loadoutPath(root, "child"), fsop);
+      // Parent policies come first (in parent order), child adds, child
+      // exclude removes whitespace.
+      expect(policyPaths).toEqual([
+        policyPath(root, "secrets"),
+        policyPath(root, "capitalization"),
+      ]);
     } finally {
       cleanup();
     }
